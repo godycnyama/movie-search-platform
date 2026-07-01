@@ -1,0 +1,31 @@
+# Prometheus scrape configuration for the Movie Search Platform.
+# Mounted read-only into the prometheus container at /etc/prometheus/prometheus.yml
+# (see docker-compose.yml). Targets use Docker Compose service DNS names.
+
+global:
+  scrape_interval: 15s
+  evaluation_interval: 15s
+  external_labels:
+    platform: movie-search
+
+scrape_configs:
+  # Prometheus scraping itself
+  - job_name: prometheus
+    static_configs:
+      - targets: ["localhost:9090"]
+
+  # .NET 10 Web API — OpenTelemetry Prometheus exporter at /metrics
+  - job_name: movie-search-api
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["api:8080"]
+        labels:
+          service: movie-search-api
+
+  # Python FastMCP server — /metrics (Prometheus exposition)
+  - job_name: mcp-server
+    metrics_path: /metrics
+    static_configs:
+      - targets: ["mcp-server:8000"]
+        labels:
+          service: mcp-server
