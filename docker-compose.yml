@@ -1,0 +1,280 @@
+# Movie Search Platform — local orchestration
+#
+# Brings up the entire platform with a single command:
+#     docker compose up --build
+#
+# The only manual step is providing a `.env` file (copy `.env.example` -> `.env`).
+# No secrets are hardcoded here — all credentials are read from the environment.
+#
+# Services & ports (see README "Service Endpoints"):
+#   postgres     5432   PostgreSQL 16 + pgvector
+#   embeddings   8001   Embedding model server (nomic-embed-text-v1.5, 768-dim)
+#   pipeline      —     Data pipeline (runs once and exits)
+#   mcp-server   8000   Python FastMCP server
+#   api          8080   .NET 10 Web API (public facing)
+#   prometheus   9090   Metrics collection
+#   grafana      3000   Dashboards
+#   jaeger      16686   Distributed tracing (OTLP in on 4317/4318)
+#   atlas        7000   Embedding Atlas visualization (bonus)
+
+x-postgres-env: &postgres-env
+  POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
+  POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+  POSTGRES_DB: ${POSTGRES_DB:-movies}
+
+services:
+  # ---------------------------------------------------------------------------
+  # PostgreSQL 16 + pgvector — structured store AND vector store
+  # ---------------------------------------------------------------------------
+  postgres:
+    image: pgvector/pgvector:pg16
+    container_name: msp-postgres
+    environment:
+      <<: *postgres-env
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      # Migrations / bootstrap SQL (Part 2). Files run in lexical order on first init.
+      - ./database/migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d $${POSTGRES_DB}"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Embedding model server — runs as its own container (no in-process download).
+  # Suggested: nomic-embed-text-v1.5 (768 dimensions) served over HTTP.
+  #
+  # NOTE: `ai/nomic-embed-text-v1.5` (Docker Model Runner) is the spec's suggestion.
+  # For a self-contained OpenAI-compatible HTTP endpoint that works out of the box,
+  # HuggingFace Text Embeddings Inference (TEI) is used below serving the same model.
+  # Swap the image/command if you prefer Docker Model Runner or Ollama — keep 768-dim.
+  # ---------------------------------------------------------------------------
+  embeddings:
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    container_name: msp-embeddings
+    command: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--port", "8001"]
+    environment:
+      # HF_TOKEN is optional for public models; supply via .env only if needed.
+      HF_TOKEN: ${HF_TOKEN:-}
+    ports:
+      - "${EMBEDDINGS_PORT:-8001}:8001"
+    volumes:
+      - model-cache:/data
+    healthcheck:
+      # TEI exposes /health once the model is loaded.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
+      interval: 15s
+      timeout: 10s
+      retries: 20
+      start_period: 120s
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Data pipeline (Part 1) — clean, impute, augment, embed, load. Runs and exits.
+  #   docker compose run --rm pipeline
+  # Idempotent: re-running upserts and does not create duplicates.
+  # ---------------------------------------------------------------------------
+  pipeline:
+    build:
+      context: ./pipeline          # requires pipeline/Dockerfile
+    container_name: msp-pipeline
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}
+      EMBEDDINGS_URL: http://embeddings:8001
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      BATCH_SIZE: ${PIPELINE_BATCH_SIZE:-64}
+      PIPELINE_VERSION: ${PIPELINE_VERSION:-0.1.0}
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    volumes:
+      # Persist the cleaning report + run logs to the host.
+      - ./pipeline/logs:/app/logs
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+    networks: [movie-net]
+    restart: "no"
+
+  # ---------------------------------------------------------------------------
+  # Python MCP server (Part 3) — FastMCP semantic-search tools over SSE.
+  # ---------------------------------------------------------------------------
+  mcp-server:
+    build:
+      context: ./mcp-server        # requires mcp-server/Dockerfile
+    container_name: msp-mcp-server
+    environment:
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}
+      EMBEDDINGS_URL: http://embeddings:8001
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
+      MCP_HOST: 0.0.0.0
+      MCP_PORT: "8000"
+      MCP_TRANSPORT: ${MCP_TRANSPORT:-sse}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: mcp-server
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+    ports:
+      - "${MCP_PORT:-8000}:8000"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8000/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+      embeddings:
+        condition: service_healthy
+      pipeline:
+        condition: service_completed_successfully
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # .NET 10 Web API (Part 4) — public facing, JWT auth, OpenAPI, observability.
+  # ---------------------------------------------------------------------------
+  api:
+    build:
+      context: ./api               # requires api/Dockerfile
+    container_name: msp-api
+    environment:
+      ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
+      ASPNETCORE_URLS: http://+:8080
+      MCP__ServerUrl: http://mcp-server:8000
+      Jwt__Issuer: ${JWT_ISSUER:-movie-search-platform}
+      Jwt__Audience: ${JWT_AUDIENCE:-movie-search-clients}
+      Jwt__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env}
+      OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
+      OTEL_SERVICE_NAME: movie-search-api
+    ports:
+      - "${API_PORT:-8080}:8080"
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      mcp-server:
+        condition: service_healthy
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Prometheus — scrapes /metrics from the API and MCP server.
+  # ---------------------------------------------------------------------------
+  prometheus:
+    image: prom/prometheus:v2.54.1
+    container_name: msp-prometheus
+    command:
+      - "--config.file=/etc/prometheus/prometheus.yml"
+      - "--storage.tsdb.path=/prometheus"
+    ports:
+      - "${PROMETHEUS_PORT:-9090}:9090"
+    volumes:
+      - ./monitoring/prometheus.yml:/etc/prometheus/prometheus.yml:ro
+      - prometheus-data:/prometheus
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:9090/-/healthy || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      api:
+        condition: service_healthy
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Grafana — dashboards (movie-search.json provisioned from monitoring/).
+  # ---------------------------------------------------------------------------
+  grafana:
+    image: grafana/grafana:11.2.0
+    container_name: msp-grafana
+    environment:
+      GF_SECURITY_ADMIN_USER: ${GRAFANA_ADMIN_USER:-admin}
+      GF_SECURITY_ADMIN_PASSWORD: ${GRAFANA_ADMIN_PASSWORD:?set GRAFANA_ADMIN_PASSWORD in .env}
+      GF_USERS_ALLOW_SIGN_UP: "false"
+    ports:
+      - "${GRAFANA_PORT:-3000}:3000"
+    volumes:
+      - ./monitoring/grafana/provisioning:/etc/grafana/provisioning:ro
+      - ./monitoring/grafana/dashboards:/var/lib/grafana/dashboards:ro
+      - grafana-data:/var/lib/grafana
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:3000/api/health || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    depends_on:
+      prometheus:
+        condition: service_healthy
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Jaeger — distributed tracing. Accepts OTLP on 4317 (gRPC) / 4318 (HTTP),
+  # UI on 16686. Trace context propagates API <-> MCP server.
+  # ---------------------------------------------------------------------------
+  jaeger:
+    image: jaegertracing/all-in-one:1.60
+    container_name: msp-jaeger
+    environment:
+      COLLECTOR_OTLP_ENABLED: "true"
+    ports:
+      - "${JAEGER_UI_PORT:-16686}:16686"   # UI
+      - "4317:4317"                         # OTLP gRPC
+      - "4318:4318"                         # OTLP HTTP
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:16686/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+    networks: [movie-net]
+    restart: unless-stopped
+
+  # ---------------------------------------------------------------------------
+  # Embedding Atlas (BONUS, Part 5) — visual exploration of movie embeddings.
+  # Reads the Atlas export produced by scripts/export_embeddings_atlas.py.
+  # ---------------------------------------------------------------------------
+  atlas:
+    build:
+      context: ./scripts           # requires scripts/Dockerfile serving embedding-atlas
+    container_name: msp-atlas
+    ports:
+      - "${ATLAS_PORT:-7000}:7000"
+    volumes:
+      - ./scripts:/app:ro
+    healthcheck:
+      test: ["CMD-SHELL", "wget -q --spider http://localhost:7000/ || exit 1"]
+      interval: 15s
+      timeout: 5s
+      retries: 10
+      start_period: 30s
+    depends_on:
+      postgres:
+        condition: service_healthy
+    networks: [movie-net]
+    restart: unless-stopped
+    profiles: ["bonus"]            # optional: `docker compose --profile bonus up`
+
+networks:
+  movie-net:
+    driver: bridge
+
+volumes:
+  postgres-data:
+  model-cache:
+  prometheus-data:
+  grafana-data:
