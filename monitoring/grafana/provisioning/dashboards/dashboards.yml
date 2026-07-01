@@ -1,0 +1,16 @@
+# Grafana dashboard provisioning — loads JSON dashboards from disk on startup.
+apiVersion: 1
+
+providers:
+  - name: movie-search
+    orgId: 1
+    folder: Movie Search
+    type: file
+    disableDeletion: false
+    editable: true
+    updateIntervalSeconds: 30
+    allowUiUpdates: true
+    options:
+      # Matches the compose mount: ./monitoring/grafana/dashboards -> /var/lib/grafana/dashboards
+      path: /var/lib/grafana/dashboards
+      foldersFromFilesStructure: false
