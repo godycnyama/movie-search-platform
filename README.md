@@ -1,14 +1,18 @@
-# 🎬 Movie Search Platform
+# 🎬 Intelligent Movie Search Platform
 
-Semantic movie search platform: an ingestion **data pipeline** that cleans and embeds a movie
-catalogue, a **PostgreSQL + pgvector** store, a **REST API** for search, and an **MCP server** that
-exposes the same capabilities to LLM agents — all observable and deployable to AWS via Terraform.
+An end-to-end semantic movie-search platform built on the **Vega movies dataset**: a Python **data
+pipeline** that cleans, imputes, augments and embeds the catalogue; a **PostgreSQL 16 + pgvector**
+store; a **Python FastMCP server** exposing semantic-search tools; and a secure, observable
+**.NET 10 Web API** for end users — all orchestrated locally with **Docker Compose** and deployable
+to **AWS via Terraform**.
 
-> ⚠️ **PLACEHOLDER — Project status:** This repository currently contains scaffolding only.
-> [mcp-server/](mcp-server/) and [pipeline/](pipeline/) hold `uv`-generated stubs; the
-> [api/](api/), [database/](database/), [monitoring/](monitoring/), [scripts/](scripts/), and
-> [terraform/](terraform/) directories are placeholders. Sections below marked ⚠️ **PLACEHOLDER**
-> describe the intended design and must be updated once the corresponding components are implemented.
+> ⚠️ **Project status — scaffolding.** This repository currently contains the orchestration and
+> documentation, plus `uv`-generated stubs in [mcp-server/](mcp-server/) and [pipeline/](pipeline/).
+> [docker-compose.yml](docker-compose.yml) and [.env.example](.env.example) are committed; the
+> per-service `Dockerfile`s and application code (pipeline stages, MCP tools, .NET API, Terraform,
+> monitoring configs) are **not yet implemented**. Sections below marked ⚠️ **PLACEHOLDER** describe
+> the intended design and must be updated as each component lands. This README follows the structure
+> required by the technical assessment brief.
 
 ---
 
@@ -36,60 +40,89 @@ exposes the same capabilities to LLM agents — all observable and deployable to
 ```
                         ┌────────────────────────────────────────────────────────┐
                         │                     Clients / Users                     │
-                        │        (web UI, curl, LLM agents via MCP host)           │
+                        │      (web UI, curl, Swagger, LLM agents via MCP)         │
                         └───────────────┬───────────────────────┬─────────────────┘
-                                        │ HTTPS/REST             │ MCP (stdio / HTTP)
-                                        ▼                        ▼
+                                        │ HTTPS/REST (JWT)       │ MCP (SSE)
+                                        ▼                        │
+                        ┌───────────────────────┐                │
+                        │      .NET 10 API       │                │
+                        │      (api/, :8080)     │                │
+                        │  JWT auth · OpenAPI    │                │
+                        │  cache · rate limit    │─── MCP client ─┤
+                        └───────────┬───────────┘                ▼
+                                    │              ┌───────────────────────────┐
+                                    │              │       MCP Server          │
+                                    │              │   (mcp-server/, :8000)    │
+                                    │              │  FastMCP semantic tools   │
+                                    │              └─────────────┬─────────────┘
+                                    │                            │ asyncpg pool
+                                    │      query embeddings      │
+                                    ▼                            ▼
                         ┌───────────────────────┐    ┌───────────────────────────┐
-                        │        REST API        │    │        MCP Server         │
-                        │      (api/, :8000)     │    │   (mcp-server/, :8080)    │
-                        │  auth · search · CRUD  │    │  search_movies, get_movie │
-                        └───────────┬───────────┘    └─────────────┬─────────────┘
-                                    │                              │
-                                    │        query embeddings      │
-                                    ▼                              ▼
-                        ┌───────────────────────┐    ┌───────────────────────────┐
-                        │   Embedding Service    │◄───┤   Shared query embedder   │
-                        │  (embeddings/, :8001)  │    └───────────────────────────┘
+                        │   Embedding Service    │◄───┤   query + doc embeddings  │
+                        │  (embeddings, :8001)   │    └───────────────────────────┘
+                        │  nomic-embed 768-dim   │
                         └───────────┬───────────┘
                                     │ vectors
                                     ▼
                         ┌────────────────────────────────────────────────────────┐
                         │            PostgreSQL 16 + pgvector (:5432)              │
-                        │        movies · embeddings (vector) · metadata           │
+                        │     movies: metadata + augmented_text + vector(768)      │
+                        │            HNSW cosine index · audit columns             │
                         └───────────────────────────▲────────────────────────────┘
-                                                     │ bulk load + embed
-                        ┌────────────────────────────┴───────────────────────────┐
-                        │                     Data Pipeline                        │
-                        │   (pipeline/)  ingest → clean/impute → embed → load      │
-                        │                 source: raw movie dataset                │
-                        └──────────────────────────────────────────────────────────┘
+                                    ▲ reads embeddings │ bulk load + embed
+              ┌─────────────────────┴──────┐          │
+              │  Embedding Atlas (:7000)   │  ┌────────┴────────────────────────┐
+              │  visualization (bonus)     │  │           Data Pipeline          │
+              └────────────────────────────┘  │  (pipeline/) Vega dataset →      │
+                                               │  clean → impute → augment →      │
+                                               │  embed → load (idempotent)       │
+                                               └──────────────────────────────────┘
 
-  Observability: OpenTelemetry traces + Prometheus metrics + structured logs → monitoring/ stack
-  Deployment:    Terraform (terraform/) → AWS (ECS/Fargate + RDS + ALB)   ⚠️ PLACEHOLDER
+  Observability: Serilog (JSON) + OpenTelemetry → Jaeger (:16686) · Prometheus (:9090) · Grafana (:3000)
+  Deployment:    Terraform (terraform/) → AWS ECS Fargate + RDS + ALB + ECR + Secrets Manager
+  Flow:          Pipeline → pgvector → MCP Server → .NET API → client   (traces span all services)
 ```
 
-> ⚠️ **PLACEHOLDER:** Replace with an authoritative diagram (e.g. a linked
-> `docs/architecture.png` exported from draw.io / Excalidraw) once component boundaries are final.
+> ⚠️ **PLACEHOLDER:** Replace with a linked `docs/architecture.png` once component boundaries are final.
+
+### Repository layout
+
+```
+movie-search-platform/
+├── README.md                 # This file
+├── docker-compose.yml        # Local orchestration (Part 6.1)              ✅ committed
+├── .env.example              # Environment template                        ✅ committed
+├── openapi.json              # Exported OpenAPI 3.1 spec                    ⚠️ to add
+├── pipeline/                 # Part 1 — data pipeline (Python)
+├── mcp-server/               # Part 3 — FastMCP server (Python)
+├── api/                      # Part 4 — .NET 10 Web API
+├── database/migrations/      # Part 2 — SQL migrations (Flyway naming)
+├── scripts/                  # export_embeddings_atlas.py, load_test.js
+├── monitoring/               # prometheus.yml, grafana/ dashboards
+├── terraform/                # Part 6 — AWS IaC
+└── .github/workflows/        # ci.yml, cd.yml
+```
 
 ---
 
 ## 2. Prerequisites
 
-Exact versions the platform is developed and tested against:
+Exact versions the platform targets:
 
 | Tool | Required version | Notes |
 |------|------------------|-------|
-| Python | **3.13** | Pinned via `.python-version` in [pipeline/](pipeline/.python-version) and [mcp-server/](mcp-server/.python-version) |
-| [uv](https://github.com/astral-sh/uv) | **≥ 0.5** | Python package & venv manager used by both services |
-| Docker Engine | **≥ 24.0** | Required for Compose stack |
-| Docker Compose | **v2 (≥ 2.20)** | `docker compose`, not the legacy `docker-compose` |
-| PostgreSQL | **16.x** with `pgvector` **≥ 0.7** | Provided via Docker Compose; only needed standalone for local DB work |
-| Terraform | ⚠️ **PLACEHOLDER** (target: **≥ 1.7**) | For AWS deployment |
-| AWS CLI | ⚠️ **PLACEHOLDER** (target: **v2**) | Authenticated to the target account |
+| Docker Engine | **≥ 24.0** | Everything runs via Compose; this is the only hard requirement to run the platform |
+| Docker Compose | **v2 (≥ 2.20)** | `docker compose`, not legacy `docker-compose` |
+| Python | **3.12+** (repo pins **3.13** via `.python-version`) | Only needed to run [pipeline/](pipeline/) or [mcp-server/](mcp-server/) outside Docker |
+| [uv](https://github.com/astral-sh/uv) | **≥ 0.5** | Python package & venv manager for both Python services |
+| .NET SDK | **10.0** | Only needed to build/run [api/](api/) outside Docker |
+| PostgreSQL | **16.x** + `pgvector` **≥ 0.7** | Provided by the `pgvector/pgvector:pg16` image |
+| Terraform | **≥ 1.7** | For AWS deployment |
+| AWS CLI | **v2** | Authenticated to the target account (SSO or named profile) |
 
-> Install tools from official sources only. New project dependencies should go through the
-> organisation's approved dependency-vetting process before use.
+> All tools should be installed from official sources, and new project dependencies should go through
+> the organisation's approved dependency-vetting process before use.
 
 ---
 
@@ -101,376 +134,444 @@ From a fresh clone to a running platform in ≤ 5 commands:
 # 1. Clone
 git clone <REPO_URL> movie-search-platform && cd movie-search-platform
 
-# 2. Create your local environment file (never commit this — it is git-ignored)
-cp .env.example .env          # ⚠️ PLACEHOLDER: .env.example to be added; edit values as needed
+# 2. Create your local environment file (git-ignored — never commit it)
+cp .env.example .env            # then edit the REQUIRED secrets (see comments in the file)
 
-# 3. Build & start all services (DB, API, MCP server, embedding service, observability)
-docker compose up -d --build
+# 3. Build & start the whole platform (db, embeddings, mcp-server, api, observability)
+docker compose up --build -d
 
-# 4. Run the data pipeline to ingest, clean, embed, and load the movie catalogue
+# 4. Run the one-shot data pipeline to clean, embed and load the Vega catalogue
 docker compose run --rm pipeline
 
-# 5. Verify the platform is up
-curl http://localhost:8000/health
+# 5. Verify the API is healthy
+curl http://localhost:8080/health
 ```
 
-> **Credentials:** All secrets (DB passwords, API signing keys, model/API keys) are read from the
-> local `.env` file, which is excluded from version control via `.gitignore`. Never hardcode
-> credentials in code or committed config. If this platform is to be exposed to a wider internal
-> audience, contact the AI Engineering team before deploying.
+Add the bonus Embedding Atlas with a profile: `docker compose --profile bonus up -d atlas`.
 
-> ⚠️ **PLACEHOLDER:** `docker-compose.yml`, `.env.example`, and the `pipeline` service definition
-> do not exist yet. Update this section once they are committed.
+> **Credentials:** all secrets (DB password, JWT signing key, Grafana admin password) are read from
+> the git-ignored `.env` file — never hardcoded in code or committed config. The compose file uses
+> `${VAR:?…}` so it fails fast if a required secret is missing. If this platform is exposed to a wider
+> internal audience, contact the AI Engineering team before deploying.
+
+> ⚠️ Until each service's `Dockerfile` and code are committed, `up --build` will fail at the build
+> step for the not-yet-implemented services.
 
 ---
 
 ## 4. Service Endpoints
 
-Local URLs when running via Docker Compose (default ports — ⚠️ **PLACEHOLDER**, confirm against
-`docker-compose.yml` once it exists):
+Local URLs when running via Docker Compose (ports per [docker-compose.yml](docker-compose.yml)):
 
 | Service | URL | Purpose |
 |---------|-----|---------|
-| REST API | http://localhost:8000 | Search & catalogue API |
-| API — health | http://localhost:8000/health | Liveness/readiness probe |
-| API — OpenAPI docs | http://localhost:8000/docs | Interactive Swagger UI |
-| MCP Server | http://localhost:8080 | MCP endpoint for LLM agents |
-| Embedding Service | http://localhost:8001 | Text → vector embedding |
+| .NET 10 API | http://localhost:8080 | Public-facing search API |
+| API — Swagger UI | http://localhost:8080/swagger | Interactive OpenAPI docs |
+| API — OpenAPI spec | http://localhost:8080/openapi/v1.json | OpenAPI 3.1 spec |
+| API — health | http://localhost:8080/health | Liveness/readiness probe |
+| API — metrics | http://localhost:8080/metrics | Prometheus metrics |
+| MCP Server | http://localhost:8000/sse | FastMCP endpoint (SSE) for MCP clients |
+| MCP — health | http://localhost:8000/health | MCP health check |
+| Embedding Service | http://localhost:8001 | Text → vector embedding (768-dim) |
 | PostgreSQL + pgvector | postgresql://localhost:5432 | Primary datastore |
-| Prometheus | http://localhost:9090 | Metrics | 
-| Grafana | http://localhost:3000 | Dashboards |
-| Jaeger / Tempo UI | http://localhost:16686 | Distributed traces |
+| Prometheus | http://localhost:9090 | Metrics collection |
+| Grafana | http://localhost:3000 | Dashboards (admin login from `.env`) |
+| Jaeger UI | http://localhost:16686 | Distributed traces |
+| Embedding Atlas (bonus) | http://localhost:7000 | Embedding visualization |
 
 ---
 
 ## 5. Data Pipeline
 
-**Location:** [pipeline/](pipeline/) — entrypoint [pipeline/main.py](pipeline/main.py).
+**Location:** [pipeline/](pipeline/) — entrypoint [pipeline/main.py](pipeline/main.py). Runs as a
+one-shot Compose service that executes and exits.
 
 ### How it works
 
-The pipeline transforms a raw movie dataset into a searchable, embedded catalogue in four stages:
+The pipeline ingests the **Vega movies dataset** (`from vega_datasets import data; data.movies()`) and
+prepares it for vector search through modular stages:
 
-1. **Ingest** — read the source dataset (⚠️ **PLACEHOLDER:** source & format, e.g. TMDB/IMDb CSV or JSON).
-2. **Clean & impute** — normalise fields, handle missing values (see [Data Decisions](#6-data-decisions)).
-3. **Embed** — build a text representation per movie and call the embedding service to produce vectors
-   (see [Embedding Strategy](#7-embedding-strategy)).
-4. **Load** — upsert rows and vectors into PostgreSQL/pgvector.
+1. **Clean** (`cleaning.py`) — de-duplicate; strip/normalise string fields; parse `Release Date` into a
+   consistent datetime; validate numeric ranges (reject negative budgets/gross, impossible ratings).
+   Emits a **structured cleaning report** (counts of issues found and actions taken).
+2. **Impute** (`imputation.py`) — fill or `NULL` missing values per the policy in [Data Decisions](#6-data-decisions).
+3. **Augment** (`augmentation.py`) — build the rich embedding text (see [Embedding Strategy](#7-embedding-strategy))
+   and engineer derived features: **`budget_tier`**, **`decade`** (plus `blockbuster_flag`).
+4. **Embed** (`embedding.py`) — call the embedding service over the network in configurable batches,
+   logging progress and failures.
+5. **Load** (`loader.py`) — **idempotent upsert** of metadata + `vector(768)` into pgvector.
+
+A final summary report is emitted to **stdout and a log file** (`pipeline/logs/`).
 
 ### How to re-run
 
 ```bash
-# Full run (idempotent upsert)
+# Full run (idempotent — re-running does not create duplicates)
 docker compose run --rm pipeline
 
-# Or locally with uv
-cd pipeline
-uv sync
-uv run python main.py            # ⚠️ PLACEHOLDER: add flags e.g. --full-refresh / --stage embed
+# Locally with uv (requires postgres + embeddings reachable via env vars)
+cd pipeline && uv sync && uv run python -m pipeline.main
 ```
+
+Batch size, DB URL, embedding URL and pipeline version come from environment variables
+(`PIPELINE_BATCH_SIZE`, `DATABASE_URL`, `EMBEDDINGS_URL`, `PIPELINE_VERSION`) — see [.env.example](.env.example).
 
 ### How to verify
 
 ```bash
-# Row count in the catalogue
-docker compose exec db psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
+# Row + embedding coverage
+docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
   -c "SELECT count(*) AS movies, count(embedding) AS embedded FROM movies;"
 
-# Smoke-test a semantic search end to end
-curl "http://localhost:8000/search?q=space+opera+with+a+rogue+ai"
+# End-to-end semantic search (needs a bearer token — see Authentication)
+curl "http://localhost:8080/api/v1/movies/search?q=action%20movies%20from%20the%2090s%20with%20high%20IMDB%20ratings" \
+  -H "Authorization: Bearer $TOKEN"
 ```
 
-Expected: `embedded` equals `movies` (every movie has a vector), and search returns ranked results.
+Expected: `embedded == movies` (every row has a vector), and search returns ranked results with
+similarity scores.
 
-> ⚠️ **PLACEHOLDER:** Document exact record counts, expected runtime, and a data-quality report
-> once the pipeline is implemented.
+> ⚠️ **PLACEHOLDER:** Document exact record counts, runtime, and the cleaning-report summary once the
+> pipeline is implemented.
 
 ---
 
 ## 6. Data Decisions
 
-Imputation and cleaning strategies, with rationale. ⚠️ **PLACEHOLDER — the table below is the
-intended policy; confirm/adjust once the pipeline is implemented.**
+Cleaning and imputation strategy across the Vega fields, chosen to **preserve data quality for
+semantic search** — the guiding principle is to never fabricate values that feed the embedding text or
+that users filter/sort on. Prefer an honest `NULL` (or a real "Unknown"/"Not Rated" category) over
+invented data. ⚠️ **PLACEHOLDER — confirm/adjust once the pipeline is implemented.**
 
-| Field | Missing-value strategy | Why |
-|-------|------------------------|-----|
-| `title` | Drop record | A movie with no title is not searchable or identifiable |
-| `overview` / `plot` | Impute empty string; flag `has_overview = false` | Preserve the row for metadata search; avoid biasing embeddings with fabricated text |
-| `release_year` | Leave `NULL` (no imputation) | Guessing a year corrupts time-based filtering; `NULL` is honest |
-| `genres` | Impute `["unknown"]` | Keeps faceting stable without inventing genres |
-| `runtime` | Median imputation within genre | Numeric completeness for filters; median is robust to outliers |
-| `rating` / `vote_average` | Leave `NULL` | Do not fabricate popularity signals |
-| Duplicates | De-duplicate by external ID, else by normalised `(title, year)` | Prevent double-counting in search results |
+| Field | Strategy | Why |
+|-------|----------|-----|
+| Duplicates | De-duplicate on normalised `(Title, Release Date)`; keep the record with the most non-null fields | Prevents double-counting in ranked search results |
+| `Title` | Trim/normalise; drop rows with no title | A movie with no title is neither identifiable nor searchable |
+| `Release Date` | Parse to `datetime`; leave `NULL` if unparseable | Enables `decade` derivation and time filters without guessing |
+| `IMDB Rating` | Leave **`NULL`** (no imputation) | The `min_imdb_rating` filter and ranking depend on truthful values; median imputation would inflate low-information films |
+| `Rotten Tomatoes Rating` | Leave **`NULL`** | Same as IMDB — critical-score queries must not see fabricated scores |
+| `Production Budget` | Leave **`NULL`**; derive `budget_tier` only when known | Budgets span orders of magnitude; imputing distorts `budget_tier` and budget-based queries |
+| `Running Time min` | Median imputation within `Major Genre`, with a `runtime_imputed` flag | Runtime is low-signal and roughly regular within a genre; median is robust to outliers |
+| `MPAA Rating` | Impute the real category **`"Not Rated"`** | "Not Rated" is semantically accurate for missing/unrated titles — better than mode |
+| `Director` | Impute **`"Unknown"`** | Preserves the row; avoids wrongly attributing a film to a real director |
+| `Distributor` | Impute **`"Unknown"`** | Same rationale as Director |
+| `Major Genre`, `Creative Type`, `Source` | Impute **`"Unknown"`** | Keeps faceting/filtering stable without inventing categories |
+| Numeric ranges | Coerce out-of-range values to `NULL` (negative budgets/gross; IMDB ∉ [0,10]; RT ∉ [0,100]) | Removes impossible values before they poison filters and derived features |
 
-**Principle:** never impute values that feed the embedding text or that users filter/sort on in a way
-that would mislead — prefer `NULL` + a boolean presence flag over fabricated data.
+**Derived features (documented rationale):**
+- **`budget_tier`** — bucketises `Production Budget` (e.g. low/mid/high/blockbuster) so budget-relative
+  queries ("small budget", "blockbuster") work without exact figures.
+- **`decade`** — integer decade from `Release Date` (e.g. 1990) powering the `decade` filter and
+  "from the 90s"-style queries.
+- **`blockbuster_flag`** — boolean from high budget + high gross, useful for popularity intent.
 
 ---
 
 ## 7. Embedding Strategy
 
-⚠️ **PLACEHOLDER — the model choice below is a recommended default; confirm the committed choice.**
-
 ### Model choice & rationale
 
-- **Model:** `sentence-transformers/all-MiniLM-L6-v2` (recommended default).
-- **Why:** small (~80 MB), fast on CPU, strong quality-per-cost for short-to-medium text, no external
-  API dependency (keeps movie data in-house), and permissively licensed. A larger model
-  (e.g. `bge-large-en-v1.5`) can be swapped in if retrieval quality needs to improve.
-- **Dimensionality:** **384** (fixed by `all-MiniLM-L6-v2`). The pgvector column is declared
-  `vector(384)` — this **must** match the model or loads will fail.
-
-> If a hosted embedding API is chosen instead, its API key must live in `.env` (never committed),
-> and the dimensionality/column type must be updated accordingly.
+- **Model:** **`nomic-ai/nomic-embed-text-v1.5`**, run as its own container (per the brief). No
+  in-process model download and no paid/hosted API — the pipeline and MCP server call it over the
+  network.
+- **Why:** strong retrieval quality for its size, fully open and locally runnable, and long context
+  (2048 tokens) that comfortably fits the augmented movie text. It keeps all data in-house.
+- **Dimensionality:** **768**. The pgvector column is declared `vector(768)` and `EMBEDDING_DIM=768`
+  in [.env.example](.env.example) — the column and model **must** agree or loads fail.
 
 ### How the embedding container is wired into Docker Compose
 
-⚠️ **PLACEHOLDER — intended wiring; add once `docker-compose.yml` exists:**
+The `embeddings` service in [docker-compose.yml](docker-compose.yml) serves the model over HTTP on
+port **8001**. The brief suggests the Docker Model Runner image `ai/nomic-embed-text-v1.5`; this repo
+uses **HuggingFace Text Embeddings Inference (TEI)** to serve the same model with a ready `/health`
+endpoint (swap the image/command for Docker Model Runner or Ollama if preferred — keep 768-dim):
 
 ```yaml
-services:
-  embeddings:
-    build: ./embeddings
-    ports:
-      - "8001:8001"
-    environment:
-      EMBEDDING_MODEL: sentence-transformers/all-MiniLM-L6-v2
-      MODEL_CACHE_DIR: /models
-    volumes:
-      - model-cache:/models        # persist downloaded weights across restarts
-
-  pipeline:
-    build: ./pipeline
-    depends_on: [embeddings, db]
-    environment:
-      EMBEDDING_URL: http://embeddings:8001
-
-  api:
-    build: ./api
-    depends_on: [embeddings, db]
-    environment:
-      EMBEDDING_URL: http://embeddings:8001   # query-time embedding reuses the same service
-
-volumes:
-  model-cache:
+embeddings:
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+  command: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--port", "8001"]
+  ports: ["8001:8001"]
+  volumes: [model-cache:/data]        # persist weights across restarts
+  healthcheck:
+    test: ["CMD-SHELL", "curl -fsS http://localhost:8001/health || exit 1"]
+    start_period: 120s
 ```
 
-Both the pipeline (document embedding) and the API (query embedding) call the **same** embedding
-service so document and query vectors are always produced by the identical model.
+Both the **pipeline** (document embedding) and the **MCP server** (query embedding) point at
+`http://embeddings:8001` via `EMBEDDINGS_URL`, so document and query vectors always come from the
+identical model.
 
 ### How the embedding text was constructed
 
-Each movie is serialised into a single text block before embedding, so that title, plot, and key
-metadata all contribute to semantic similarity:
+Each movie is serialised into the rich text block specified by the brief, then embedded:
 
 ```
-Title: {title} ({release_year})
-Genres: {genres joined by ", "}
-Overview: {overview}
+Title: {title}
+Genre: {genre}
+Director: {director}
+MPAA Rating: {mpaa_rating}
+Release Year: {year}
+Runtime: {runtime} minutes
+IMDB Rating: {imdb_rating}/10 ({imdb_votes} votes)
+Rotten Tomatoes: {rt_rating}%
+Budget: ${budget}
+Distributor: {distributor}
+Creative Type: {creative_type}
+Source: {source}
 ```
 
-⚠️ **PLACEHOLDER:** Confirm the exact template and which fields are included once the pipeline is
-implemented. Fields imputed as empty (e.g. missing overview) are omitted rather than injected as
-placeholder text.
+Fields imputed as `NULL` are rendered as `"Unknown"`/omitted rather than fabricated. The exact
+serialisation lives in `pipeline/src/pipeline/augmentation.py` and the produced string is stored in the
+`augmented_text` column for transparency and re-embedding.
 
 ---
 
 ## 8. MCP Server
 
-**Location:** [mcp-server/](mcp-server/) — entrypoint [mcp-server/main.py](mcp-server/main.py).
-
-The MCP (Model Context Protocol) server exposes the platform's search capabilities to LLM agents.
+**Location:** [mcp-server/](mcp-server/) — a **FastMCP** server exposing movie search as MCP tools
+consumable by any MCP-compatible client (including the .NET API). Transport is **SSE** locally
+(configurable for production), with an `asyncpg` connection pool to pgvector, Pydantic v2 models,
+JSON structured logging, and a `GET /health` endpoint.
 
 ### Available tools
 
-⚠️ **PLACEHOLDER — intended tool surface; update once tools are registered in
-[mcp-server/main.py](mcp-server/main.py):**
+⚠️ **PLACEHOLDER — signatures per the brief; update once registered in `mcp-server/src/server/tools.py`.**
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
-| `search_movies` | Semantic search over the catalogue | `query: string`, `limit?: int` |
-| `get_movie` | Fetch a single movie by ID | `movie_id: string` |
-| `filter_movies` | Structured filter (genre, year range, rating) | `genre?`, `year_from?`, `year_to?`, `min_rating?` |
+| `search_movies_by_description` | Semantic vector search with optional metadata filters; returns ranked results with similarity scores | `query: str`, `top_k: int = 10`, `genre_filter: str \| None`, `min_imdb_rating: float \| None`, `mpaa_rating: str \| None`, `decade: int \| None` |
+| `get_movie_by_title` | Retrieve a movie by exact or fuzzy title match | `title: str` |
+| `get_similar_movies` | Most semantically similar movies to a given movie | `movie_id: str`, `top_k: int = 5` |
+| `list_genres` | All distinct genres in the dataset | — |
+| `get_dataset_stats` | Summary statistics about the dataset | — |
 
 ### How to test the tools directly
 
 ```bash
-# List available tools using the MCP Inspector (no code required)
-npx @modelcontextprotocol/inspector uv run --directory mcp-server python main.py
+# Interactive: point the MCP Inspector at the SSE endpoint (no code required)
+npx @modelcontextprotocol/inspector
+#   → Transport: SSE, URL: http://localhost:8000/sse
 
-# Or, if the server runs over HTTP via Compose:
-curl -X POST http://localhost:8080/mcp \
-  -H "Content-Type: application/json" \
-  -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}'
+# Health check
+curl http://localhost:8000/health
 ```
 
-⚠️ **PLACEHOLDER:** Confirm transport (stdio vs HTTP) and the exact invocation once implemented.
+Example natural-language queries the system must handle: *"action movies from the 90s with high IMDB
+ratings"*, *"critically acclaimed drama films with small budgets"*, *"animated family movies
+distributed by Disney"*, *"sci-fi films directed by James Cameron"*, *"dark psychological thrillers
+with low Rotten Tomatoes scores"*.
 
 ---
 
 ## 9. API Documentation
 
-Interactive docs are served at http://localhost:8000/docs (Swagger UI). Endpoints below are the
-intended contract — ⚠️ **PLACEHOLDER, confirm once [api/](api/) is implemented.**
+**Base URL:** `http://localhost:8080` · Swagger UI at `/swagger` · spec at `/openapi/v1.json` (also
+exported to [openapi.json](openapi.json)). All `/api/v1/*` endpoints require a valid JWT (see
+[Authentication](#10-authentication)). ⚠️ **PLACEHOLDER — confirm once [api/](api/) is implemented.**
 
-### `GET /health`
+### `GET /health` — liveness + readiness (no auth)
 
 ```bash
-curl http://localhost:8000/health
+curl http://localhost:8080/health
 ```
 ```json
-{ "status": "ok", "db": "up", "embeddings": "up" }
+{ "status": "Healthy", "dependencies": { "mcp-server": "Healthy", "postgres": "Healthy" } }
 ```
 
-### `GET /search` — semantic search
+### `GET /api/v1/movies/search` — natural-language search
+
+Query params: `q` (required), `top_k` (default 10, max 50), `genre`, `min_imdb_rating`,
+`mpaa_rating`, `decade`.
 
 ```bash
-curl "http://localhost:8000/search?q=space%20opera%20with%20a%20rogue%20ai&limit=3" \
+curl "http://localhost:8080/api/v1/movies/search?q=sci-fi%20films%20directed%20by%20James%20Cameron&top_k=3" \
   -H "Authorization: Bearer $TOKEN"
 ```
 ```json
 {
-  "query": "space opera with a rogue ai",
+  "query": "sci-fi films directed by James Cameron",
+  "count": 3,
   "results": [
-    { "id": "603", "title": "The Matrix", "year": 1999, "score": 0.82 },
-    { "id": "62", "title": "2001: A Space Odyssey", "year": 1968, "score": 0.79 }
+    { "id": "9f1c…", "title": "Terminator 2: Judgment Day", "release_year": 1991,
+      "major_genre": "Action", "director": "James Cameron", "imdb_rating": 8.5,
+      "rt_rating": 93, "similarity_score": 0.86 },
+    { "id": "3ab7…", "title": "Aliens", "release_year": 1986,
+      "major_genre": "Action", "director": "James Cameron", "imdb_rating": 8.4,
+      "similarity_score": 0.81 }
   ]
 }
 ```
 
-### `GET /movies/{id}` — fetch by ID
+### `GET /api/v1/movies/{id}` — get movie by ID
 
 ```bash
-curl http://localhost:8000/movies/603 -H "Authorization: Bearer $TOKEN"
+curl http://localhost:8080/api/v1/movies/9f1c… -H "Authorization: Bearer $TOKEN"
 ```
 ```json
-{ "id": "603", "title": "The Matrix", "year": 1999, "genres": ["Action","Sci-Fi"], "overview": "..." }
+{ "id": "9f1c…", "title": "Terminator 2: Judgment Day", "release_year": 1991,
+  "major_genre": "Action", "director": "James Cameron", "distributor": "TriStar",
+  "mpaa_rating": "R", "imdb_rating": 8.5, "rt_rating": 93,
+  "production_budget": 102000000, "running_time_min": 137, "budget_tier": "blockbuster",
+  "decade": 1990 }
 ```
 
-### `POST /movies` — create (admin) ⚠️ PLACEHOLDER
+### `GET /api/v1/movies/{id}/similar` — similar movies
 
 ```bash
-curl -X POST http://localhost:8000/movies \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{"title":"New Film","year":2026,"overview":"..."}'
+curl "http://localhost:8080/api/v1/movies/9f1c…/similar?top_k=5" -H "Authorization: Bearer $TOKEN"
 ```
 ```json
-{ "id": "10001", "status": "created" }
+{ "source_id": "9f1c…", "results": [ { "id": "…", "title": "The Terminator", "similarity_score": 0.88 } ] }
+```
+
+### `GET /api/v1/movies/genres` — list genres
+
+```bash
+curl http://localhost:8080/api/v1/movies/genres -H "Authorization: Bearer $TOKEN"
+```
+```json
+{ "genres": ["Action", "Adventure", "Comedy", "Drama", "Horror", "Musical", "Thriller", "Western"] }
+```
+
+### `GET /api/v1/stats` — dataset statistics (**admin** role)
+
+```bash
+curl http://localhost:8080/api/v1/stats -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+```json
+{ "total_movies": 3201, "with_embeddings": 3201, "genres": 12,
+  "year_range": [1915, 2010], "avg_imdb_rating": 6.28, "pipeline_version": "0.1.0" }
 ```
 
 ---
 
 ## 10. Authentication
 
-⚠️ **PLACEHOLDER — intended scheme; confirm once auth is implemented.**
+The API uses **JWT Bearer token** authentication. All `/api/v1/*` endpoints require a valid token.
+Two roles: **`reader`** (search endpoints only) and **`admin`** (all endpoints, including
+`/api/v1/stats`). ⚠️ **PLACEHOLDER — confirm once auth is implemented.**
 
-The API uses **bearer tokens (JWT)**.
-
-### Obtain a token
+### Obtain a token (client-credentials flow)
 
 ```bash
-curl -X POST http://localhost:8000/auth/token \
+curl -X POST http://localhost:8080/auth/token \
   -H "Content-Type: application/json" \
-  -d '{"username":"'"$API_USER"'","password":"'"$API_PASSWORD"'"}'
+  -d '{"client_id":"'"$CLIENT_ID"'","client_secret":"'"$CLIENT_SECRET"'"}'
 ```
 ```json
-{ "access_token": "eyJhbGciOi...", "token_type": "bearer", "expires_in": 3600 }
+{ "access_token": "eyJhbGciOi…", "token_type": "Bearer", "expires_in": 3600, "role": "reader" }
 ```
 
 ### Use the token
 
 ```bash
-TOKEN="eyJhbGciOi..."
-curl "http://localhost:8000/search?q=heist" -H "Authorization: Bearer $TOKEN"
+TOKEN="eyJhbGciOi…"
+curl "http://localhost:8080/api/v1/movies/search?q=heist" -H "Authorization: Bearer $TOKEN"
 ```
 
-- Credentials (`API_USER`, `API_PASSWORD`) and the JWT signing secret are read from `.env` — never
-  hardcoded or committed.
-- Tokens expire; request a new one via `/auth/token` when you receive `401 Unauthorized`.
+- The JWT signing key (`JWT_SIGNING_KEY`), issuer and audience are read from `.env` — never hardcoded
+  or committed. In AWS these come from Secrets Manager.
+- Tokens expire (`expires_in`); request a new one from `/auth/token` on `401 Unauthorized`.
+- Calling an admin-only endpoint with a `reader` token returns `403 Forbidden`.
 
 ---
 
 ## 11. Observability
 
-**Location:** [monitoring/](monitoring/). ⚠️ **PLACEHOLDER — intended stack; confirm once configured.**
+**Location:** [monitoring/](monitoring/). ⚠️ **PLACEHOLDER — configs to be committed.**
 
 | Signal | Tooling | Where to find it |
 |--------|---------|------------------|
-| **Traces** | OpenTelemetry → Jaeger/Tempo | http://localhost:16686 |
-| **Metrics** | Prometheus (scrapes `/metrics` on each service) | http://localhost:9090 → dashboards in Grafana http://localhost:3000 |
-| **Logs** | Structured JSON to stdout | `docker compose logs -f <service>`; shipped to Loki/CloudWatch in deployed envs |
+| **Traces** | OpenTelemetry → **Jaeger** (local) / AWS X-Ray (prod). Context propagates **.NET API ↔ Python MCP server** | http://localhost:16686 |
+| **Metrics** | OpenTelemetry → Prometheus, scraped from `/metrics` | http://localhost:9090; dashboards in **Grafana** http://localhost:3000 |
+| **Logs** | **Serilog** (.NET) & JSON logging (Python) → console + file sink | `docker compose logs -f <service>`; CloudWatch in AWS |
 
-Each service is instrumented with OpenTelemetry; trace context propagates across API →
-embedding service → database so a single search can be followed end to end.
+A **Grafana dashboard** (`monitoring/grafana/dashboards/movie-search.json`) provides at minimum:
+request rate & latency (p50/p95/p99), error rate, MCP tool-call latency, and active connections.
+The API targets **p95 < 500ms** under normal load, with response caching for repeated queries and
+rate limiting of **60 req/min per authenticated user**.
 
 ---
 
 ## 12. Terraform Deployment
 
-**Location:** [terraform/](terraform/). ⚠️ **PLACEHOLDER — no Terraform is committed yet; the steps
-below describe the intended AWS deployment (ECS/Fargate + RDS + ALB).**
+**Location:** [terraform/](terraform/). ⚠️ **PLACEHOLDER — Terraform to be committed.** Target:
+**AWS ECS Fargate** behind an **ALB (HTTPS/ACM)**, backed by **RDS PostgreSQL (pgvector)** in private
+subnets, images in **ECR**, secrets in **Secrets Manager**, logs/traces in **CloudWatch/X-Ray**.
 
-Target architecture: containers on **ECS/Fargate** behind an **Application Load Balancer**, backed by
-**RDS for PostgreSQL** (with the `pgvector` extension enabled), images in **ECR**, secrets in **AWS
-Secrets Manager**, and logs/metrics in **CloudWatch**.
-
-```bash
-# 0. Authenticate to the target AWS account (SSO / named profile)
-aws sso login --profile <PROFILE>          # ⚠️ PLACEHOLDER
-
-# 1. Initialise Terraform (uses a remote S3 + DynamoDB backend)
-cd terraform
-terraform init
-
-# 2. Select / create a workspace per environment
-terraform workspace select staging || terraform workspace new staging
-
-# 3. Review the plan
-terraform plan -var-file=environments/staging.tfvars   # ⚠️ PLACEHOLDER
-
-# 4. Apply
-terraform apply -var-file=environments/staging.tfvars
-
-# 5. Build & push images, then run DB migrations / initial pipeline
-#    ⚠️ PLACEHOLDER: document ECR push + one-off Fargate task for migrations & first ingest
+```
+terraform/
+├── modules/{networking,compute,rds,ecr,alb,iam,monitoring,secrets}/
+├── environments/{dev,prod}/
+├── main.tf · variables.tf · outputs.tf · README.md
 ```
 
-- **Never** put credentials in `.tfvars` committed to git — use AWS Secrets Manager / SSM Parameter
-  Store and pass ARNs. State should live in an encrypted remote backend, not locally.
-- Deployment targets the organisation's own AWS account only. Do not deploy to public/consumer
-  hosting. Coordinate with the AI Engineering team before exposing the platform internally.
+Infrastructure guarantees: all secrets via Secrets Manager (no hardcoded credentials); compute tasks
+use IAM roles (no access keys); RDS in private subnets only; ALB with HTTPS; CPU/memory auto-scaling;
+VPC Flow Logs enabled; **remote state in S3 with DynamoDB locking**; every resource tagged
+`Environment`, `Project`, `ManagedBy`.
+
+### Step-by-step (dev)
+
+```bash
+# 0. Authenticate to the target AWS account
+aws sso login --profile <PROFILE>
+
+# 1. Build & push images to ECR (one-off bootstrap, or via CI)
+#    ⚠️ PLACEHOLDER: aws ecr get-login-password | docker login … && docker compose build && docker push …
+
+# 2. Initialise Terraform for the dev environment (S3 backend + DynamoDB lock)
+cd terraform/environments/dev
+terraform init
+
+# 3. Review the plan
+terraform plan
+
+# 4. Apply
+terraform apply
+
+# 5. Run DB migrations + initial pipeline as a one-off Fargate task
+#    ⚠️ PLACEHOLDER: document the task-run command and the ALB URL from `terraform output`
+```
+
+- Never commit real `*.tfvars` with secrets — they are git-ignored; pass Secrets Manager ARNs instead.
+- Deployment targets the organisation's own AWS account only — do not use public/consumer hosting.
+  Coordinate with the AI Engineering team before exposing the platform internally.
 
 ---
 
 ## 13. Running Tests
 
-⚠️ **PLACEHOLDER — no test suites are committed yet; commands below are the intended layout.**
+⚠️ **PLACEHOLDER — test suites to be committed; commands reflect the intended layout and CI.**
 
 ### Unit tests
 
 ```bash
-# Per service (pytest via uv)
-cd api        && uv run pytest
-cd pipeline   && uv run pytest
-cd mcp-server && uv run pytest
+cd pipeline   && uv run pytest        # Python — cleaning/imputation/augmentation logic
+cd mcp-server && uv run pytest        # Python — tool logic, query building
+cd api        && dotnet test          # .NET — xUnit unit + integration tests
 ```
 
 ### Integration tests
 
 ```bash
-# Spins up the Compose stack (DB + embeddings) and exercises real endpoints
-docker compose -f docker-compose.yml -f docker-compose.test.yml up --abort-on-container-exit
+# Bring up the stack and exercise real endpoints against seeded data
+docker compose up -d --build
+docker compose run --rm pipeline
+# then run the API/MCP integration suite (hits http://localhost:8080 / :8000)
+cd api && dotnet test --filter Category=Integration
 ```
 
 ### Load tests
 
 ```bash
-# e.g. with k6 or Locust against a running API   ⚠️ PLACEHOLDER: pick and commit a tool
-k6 run tests/load/search.js
+# k6 targeting the search endpoint (scripts/load_test.js) — validates p95 < 500ms
+k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080 -e TOKEN=$TOKEN
 ```
 
-> ⚠️ **PLACEHOLDER:** Add coverage thresholds, CI wiring (`.github/workflows/`), and expected
-> pass criteria once tests exist.
+**Linting/type-checking (enforced in CI):** `ruff` + `mypy` for Python, `dotnet format --verify-no-changes`
+for .NET. CI (`.github/workflows/ci.yml`) also builds all images, runs a Compose integration test, and
+runs `terraform fmt/validate/plan`.
 
 ---
 
@@ -478,20 +579,23 @@ k6 run tests/load/search.js
 
 **Current limitations**
 
-- 🚧 The platform is **scaffolding only** — the API, database schema, embedding service, monitoring,
-  and Terraform are not yet implemented. Most sections above are intended designs, not shipped behaviour.
-- No dataset, migrations, or seed data are committed.
-- No CI/CD pipeline is defined ([.github/workflows/](.github/workflows/) is empty).
+- 🚧 **Scaffolding stage** — orchestration ([docker-compose.yml](docker-compose.yml)) and this
+  documentation exist, but the pipeline stages, MCP tools, .NET API, migrations, monitoring configs,
+  and Terraform are **not yet implemented**. Sections marked ⚠️ are intended designs.
+- No dataset load, migrations, or seed data are committed yet.
+- No CI/CD workflows are defined ([.github/workflows/](.github/workflows/) is empty).
+- The `embeddings` service pulls model weights on first start (cold start ~1–2 min); healthcheck
+  `start_period` accounts for this.
 
 **Future improvements**
 
-- Implement and commit `docker-compose.yml`, `.env.example`, and each service.
-- Add a hybrid search mode (BM25/keyword + vector) with re-ranking for better relevance.
-- Evaluate a larger embedding model (e.g. `bge-large-en-v1.5`) and measure retrieval quality.
-- Add pagination, filtering, and caching to the search API.
-- Add ANN indexing (pgvector HNSW) and benchmark recall vs. latency at scale.
-- Wire up CI (lint, type-check, tests) and CD (build → ECR → Terraform apply).
-- Add authn/authz roles (read vs. admin) and rate limiting.
+- Implement each service + `Dockerfile` so `docker compose up --build` runs end to end on a clean machine.
+- Hybrid search (vector similarity + full-text/metadata filters) with re-ranking; document a hybrid query.
+- Tune the pgvector **HNSW** index (`m`, `ef_search`) and benchmark recall vs. latency at scale.
+- Response caching TTL tuning and per-role rate limits.
+- Evaluate larger/alternative embedding models and measure retrieval quality on a labelled query set.
+- Complete the CI/CD pipelines (lint, test, build, Compose integration, `terraform apply` to dev→prod).
+- Finish the Embedding Atlas bonus and document how to interpret the genre-coloured projection.
 
 ---
 
