@@ -2,11 +2,8 @@
 
 namespace Infrastructure.Settings;
 
-public class InfrastructureSettings
+public class OllamaSettings
 {
-    [Required]
-    public string PostgresConnectionString { get; set; } = string.Empty;
-
     [Required]
     public string OllamaBaseUrl { get; set; } = string.Empty;
 }
