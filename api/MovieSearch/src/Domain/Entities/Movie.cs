@@ -1,3 +1,5 @@
+using Pgvector;
+
 namespace Domain.Entities;
 
 /// <summary>
@@ -76,7 +78,7 @@ public class Movie
     public string AugmentedText { get; set; } = string.Empty;
 
     /// <summary>768-dimensional embedding vector (pgvector). NULL until the pipeline embeds the row.</summary>
-    public float[]? Embedding { get; set; }
+    public Vector? Embedding { get; set; }
 
     // Audit columns.
 
