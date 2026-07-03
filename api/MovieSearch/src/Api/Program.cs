@@ -1,12 +1,26 @@
+using Api.Extensions;
+using Api.Settings;
+using Application.Extensions;
+using Application.Responses;
+using Carter;
+using Infrastructure;
+using Infrastructure.Extensions;
+using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+
 var builder = WebApplication.CreateBuilder(args);
 
-// Add services to the container.
-// Learn more about configuring OpenAPI at https://aka.ms/aspnet/openapi
+builder.AddObservability();
+builder.AddApplicationServices();
+builder.Services.AddInfrastructureServices(builder.Configuration);
+builder.Services.AddApiServices(builder.Configuration);
+
 builder.Services.AddOpenApi();
+
+builder.Services.AddHealthChecks()
+       .AddDbContextCheck<ApplicationDbContext>("postgres");
 
 var app = builder.Build();
 
-// Configure the HTTP request pipeline.
 if (app.Environment.IsDevelopment())
 {
     app.MapOpenApi();
@@ -14,28 +28,26 @@ if (app.Environment.IsDevelopment())
 
 app.UseHttpsRedirection();
 
-var summaries = new[]
-{
-    "Freezing", "Bracing", "Chilly", "Cool", "Mild", "Warm", "Balmy", "Hot", "Sweltering", "Scorching"
-};
+app.UseCors(CorsSettings.PolicyName);
 
-app.MapGet("/weatherforecast", () =>
+app.UseAuthentication();
+app.UseAuthorization();
+
+app.MapCarter();
+
+// Prometheus scrapes this endpoint (docker-compose monitoring/prometheus.yml).
+app.MapPrometheusScrapingEndpoint();
+
+// Liveness/readiness probe (README §9; docker-compose healthcheck curls this).
+// Emits the HealthResponse contract: overall status + per-dependency status.
+app.MapHealthChecks("/health", new HealthCheckOptions
 {
-    var forecast = Enumerable.Range(1, 5).Select(index =>
-        new WeatherForecast
-        (
-            DateOnly.FromDateTime(DateTime.Now.AddDays(index)),
-            Random.Shared.Next(-20, 55),
-            summaries[Random.Shared.Next(summaries.Length)]
-        ))
-        .ToArray();
-    return forecast;
-})
-.WithName("GetWeatherForecast");
+    ResponseWriter = (context, report) =>
+        context.Response.WriteAsJsonAsync(new HealthResponse
+        {
+            Status = report.Status.ToString(),
+            Dependencies = report.Entries.ToDictionary(entry => entry.Key, entry => entry.Value.Status.ToString()),
+        }),
+});
 
 app.Run();
-
-internal record WeatherForecast(DateOnly Date, int TemperatureC, string? Summary)
-{
-    public int TemperatureF => 32 + (int)(TemperatureC / 0.5556);
-}
