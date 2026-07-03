@@ -7,7 +7,23 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Carter modules (minimal-API endpoints) live in this assembly's Features/
+         vertical slices, so the ASP.NET Core shared framework is required here. -->
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <PackageReference Include="Asp.Versioning.Http" />
+    <PackageReference Include="Carter" />
+    <PackageReference Include="WolverineFx" />
+  </ItemGroup>
+
+  <ItemGroup>
     <ProjectReference Include="..\Domain\Domain.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <Folder Include="Extensions\" />
   </ItemGroup>
 
 </Project>
