@@ -1,0 +1,13 @@
+# Copy to terraform.tfvars (git-ignored — never commit real values; secrets are
+# generated in-stack and stored in Secrets Manager, so no secret goes here).
+aws_region        = "eu-west-1"
+image_tag         = "bootstrap" # first apply only; CD passes the commit SHA afterwards
+github_repository = "<org>/<repo>"
+
+# From terraform/bootstrap outputs:
+terraform_state_bucket_arn = "arn:aws:s3:::<state-bucket-name>"
+terraform_lock_table_arn   = "arn:aws:dynamodb:eu-west-1:<account-id>:table/movie-search-terraform-locks"
+
+# Optional:
+# acm_certificate_arn = "arn:aws:acm:eu-west-1:<account-id>:certificate/<id>"
+# alarm_email         = "team@example.com"
