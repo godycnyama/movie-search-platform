@@ -32,9 +32,24 @@ class Settings(BaseSettings):
     db_pool_min_size: int = Field(default=1, ge=0, description="asyncpg pool floor.")
     db_pool_max_size: int = Field(default=10, ge=1, description="asyncpg pool ceiling.")
 
+    # --- Embeddings: swappable backend (see server/embeddings.py) ------------
+    # ENV selects the query-embedding backend: `local` uses the Ollama container,
+    # `dev`/`prod` use Amazon Bedrock. MUST match the backend (and model) the
+    # pipeline embedded the catalogue with, or cosine similarity is meaningless.
+    # `embedding_provider` can override the environment-derived choice explicitly
+    # (mainly for tests).
+    env: Literal["local", "dev", "prod"] = Field(
+        default="local",
+        description="Deployment environment; drives the default embedding backend.",
+    )
+    embedding_provider: Literal["auto", "ollama", "bedrock"] = Field(
+        default="auto",
+        description="Explicit backend override; 'auto' derives it from env.",
+    )
+
     ollama_url: str = Field(
         default="http://localhost:11434",
-        description="Base URL of the Ollama server that embeds search queries.",
+        description="Base URL of the Ollama server that embeds search queries (local backend).",
     )
 
     embedding_model: str = Field(
@@ -42,10 +57,20 @@ class Settings(BaseSettings):
         description="Ollama model; MUST be the same model the pipeline embedded with.",
     )
 
+    bedrock_region: str = Field(
+        default="us-east-1",
+        description="AWS region for the Bedrock runtime (dev/prod backend).",
+    )
+
+    bedrock_embedding_model_id: str = Field(
+        default="amazon.titan-embed-text-v2:0",
+        description="Bedrock embedding model id; must match the pipeline's Bedrock model.",
+    )
+
     embedding_dim: int = Field(
         default=EMBEDDING_DIM,
         ge=1,
-        description="Expected embedding dimensionality; must match vector(768).",
+        description="Expected embedding dimensionality; must match the pgvector vector(N) column.",
     )
 
     mcp_host: str = Field(default="127.0.0.1", description="Bind host (0.0.0.0 in containers).")

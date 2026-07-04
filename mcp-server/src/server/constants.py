@@ -6,10 +6,15 @@ invariants, tool contract limits and wire/column definitions that must stay
 consistent across runs (and, where noted, with the pipeline and .NET API).
 """
 
+import os
+
 # --- Shared schema ------------------------------------------------------------
 
-EMBEDDING_DIM = 768
-"""Must match the pgvector ``vector(768)`` column and the embedding model."""
+EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
+"""Embedding dimensionality — must match the pgvector ``vector(N)`` column and the
+active embedding model (local nomic-embed-text = 768; AWS Bedrock Titan Text
+Embeddings V2 = 1024). Query and document embeddings must use the same model per
+environment or cosine similarity is meaningless."""
 
 
 class UserRoles:

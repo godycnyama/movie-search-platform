@@ -19,7 +19,7 @@ from fastmcp import FastMCP
 from config import Settings
 from server.constants import MAX_TOP_K
 from server.db import Database
-from server.embeddings import OllamaEmbeddingsClient
+from server.embeddings import EmbeddingsProvider
 from server.logging_config import request_id_var
 from server.metrics import TOOL_CALLS, TOOL_DURATION_SECONDS
 from server.models import DatasetStats, MovieResult
@@ -30,7 +30,7 @@ logger = logging.getLogger(__name__)
 def register_tools(
     mcp: FastMCP,
     db: Database,
-    embeddings: OllamaEmbeddingsClient,
+    embeddings: EmbeddingsProvider,
     settings: Settings,
 ) -> None:
     """Registers the spec's five tools against the given server/dependencies."""

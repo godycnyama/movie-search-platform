@@ -17,14 +17,14 @@ from starlette.responses import JSONResponse, Response
 
 from config import Settings
 from server.db import Database
-from server.embeddings import OllamaEmbeddingsClient
+from server.embeddings import EmbeddingsProvider, create_embeddings_provider
 from server.logging_config import configure_logging
 from server.tools import register_tools
 
 logger = logging.getLogger(__name__)
 
 
-def create_server(settings: Settings, db: Database, embeddings: OllamaEmbeddingsClient) -> FastMCP:
+def create_server(settings: Settings, db: Database, embeddings: EmbeddingsProvider) -> FastMCP:
     """Builds the FastMCP server with tools and the /health route registered."""
     mcp = FastMCP(name="movie-search")
 
@@ -59,9 +59,7 @@ def main() -> None:
     configure_logging(settings.log_level)
 
     db = Database(settings.database_url, settings.db_pool_min_size, settings.db_pool_max_size)
-    embeddings = OllamaEmbeddingsClient(
-        settings.ollama_url, settings.embedding_model, settings.embedding_dim
-    )
+    embeddings = create_embeddings_provider(settings)
 
     mcp = create_server(settings, db, embeddings)
 
