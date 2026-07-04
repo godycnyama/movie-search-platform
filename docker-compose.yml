@@ -224,18 +224,22 @@ services:
 
   # ---------------------------------------------------------------------------
   # .NET 10 Web API (Part 4) — public facing, JWT auth, OpenAPI, observability.
+  # All movie reads go through the MCP server (embedding + vector search happen
+  # there); Postgres is only accessed directly for the API-owned users table.
   # ---------------------------------------------------------------------------
   api:
     build:
-      context: ./api               # requires api/Dockerfile
+      context: ./api/MovieSearch   # solution root (Directory.*.props live here)
+      dockerfile: src/Api/Dockerfile
     container_name: msp-api
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:8080
       PostgresSettings__PostgresConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-movies};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
-      OllamaSettings__OllamaBaseUrl: http://embeddings:8001
+      # Movie data source: the MCP server's tools (transport must match MCP_TRANSPORT).
+      McpSettings__ServerUrl: http://mcp-server:8000
+      McpSettings__Transport: ${MCP_TRANSPORT:-sse}
       RedisSettings__ConnectionString: redis:6379,password=${REDIS_PASSWORD}
-      MCP__ServerUrl: http://mcp-server:8000
       JwtSettings__Issuer: ${JWT_ISSUER:-movie-search-platform}
       JwtSettings__Audience: ${JWT_AUDIENCE:-movie-search-clients}
       JwtSettings__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env}
@@ -250,6 +254,9 @@ services:
       retries: 10
       start_period: 30s
     depends_on:
+      # The users/auth store; movie data arrives via mcp-server instead.
+      postgres:
+        condition: service_healthy
       mcp-server:
         condition: service_healthy
       redis:

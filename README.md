@@ -9,12 +9,10 @@ to **AWS via Terraform**.
 > **Project status — core implemented, deployment pending.**
 > ✅ **Done:** [docker-compose.yml](docker-compose.yml) (11 services), the full data pipeline
 > ([pipeline/](pipeline/)), Alembic migrations ([database/migrations/](database/migrations/)), the
-> FastMCP server with all five tools ([mcp-server/](mcp-server/)), most of the .NET 10 API
-> ([api/](api/) — endpoints, JWT auth, Redis caching, pgvector search, OpenTelemetry), and the
-> monitoring configs ([monitoring/](monitoring/)).
-> 🚧 **Outstanding:** the API's embedding client is a stub (semantic search via the API returns an
-> error until it is wired to the embedding service — the MCP server path works end to end), test
-> suites are template stubs, and [terraform/](terraform/), [scripts/](scripts/) and
+> FastMCP server ([mcp-server/](mcp-server/)), the .NET 10 API
+> ([api/](api/) — endpoints served through the MCP server, JWT auth, Redis caching, OpenTelemetry),
+> and the monitoring configs ([monitoring/](monitoring/)).
+> 🚧 **Outstanding:** [terraform/](terraform/) and
 > [.github/workflows/](.github/workflows/) are empty. Sections below marked ⚠️ describe intended
 > design that has not landed yet. This README follows the structure required by the technical
 > assessment brief.
@@ -51,13 +49,13 @@ to **AWS via Terraform**.
                                         ▼                        ▼
                         ┌───────────────────────┐    ┌───────────────────────────┐
                         │      .NET 10 API       │    │        MCP Server          │
-                        │      (api/, :8080)     │    │    (mcp-server/, :8000)    │
-                        │  JWT auth · OpenAPI    │    │   FastMCP semantic tools   │
-                        │  Redis cache · OTel    │    │   asyncpg pool · OTel      │
-                        └─────┬─────────┬───────┘    └─────┬──────────────┬──────┘
-                              │ EF Core │ query embeddings │ asyncpg      │ query
-                              │ +pgvector│ (stub — see §14) │              │ embeddings
-                              ▼         ▼                  ▼              ▼
+                        │      (api/, :8080)     │───▶│    (mcp-server/, :8000)    │
+                        │  JWT auth · OpenAPI    │MCP │   FastMCP semantic tools   │
+                        │  Redis cache · OTel    │SSE │   asyncpg pool · OTel      │
+                        └─────┬─────────────────┘    └─────┬──────────────┬──────┘
+                              │ EF Core                    │ asyncpg      │ query
+                              │ (users/auth only)          │ + pgvector   │ embeddings
+                              ▼                            ▼              ▼
         ┌───────────────────────────────────────────┐    ┌───────────────────────────┐
         │     PostgreSQL 16 + pgvector (:5432)       │    │     Ollama (:11434)        │
         │  movies: metadata + augmented_text +       │    │  nomic-embed-text 768-dim  │
@@ -76,9 +74,12 @@ to **AWS via Terraform**.
   Bonus:         Embedding Atlas (:7000, compose profile "bonus")   ⚠️ not started
 ```
 
-Note: the API currently performs vector search **directly against pgvector** (EF Core +
-`Pgvector`), with the MCP server serving MCP clients such as LLM agents. Compose passes
-`MCP__ServerUrl` to the API, but an API→MCP client integration is not implemented.
+Note: the API serves **all movie reads through the MCP server** (official `ModelContextProtocol`
+C# SDK over SSE, one tool call per endpoint — see
+[McpMovieCatalogService](api/MovieSearch/src/Infrastructure/Services/McpMovieCatalogService.cs));
+query embedding and pgvector search happen inside the MCP server. The API touches Postgres
+directly only for its own `users` table (auth). The same MCP tools remain consumable by any other
+MCP client (LLM agents, MCP Inspector).
 
 ### Repository layout
 
@@ -247,7 +248,7 @@ docker compose exec postgres psql -U "$POSTGRES_USER" -d "$POSTGRES_DB" \
 # Inspect the cleaning report
 cat pipeline/logs/cleaning_report.json
 
-# Semantic search via the MCP server (works end to end today; the API path is pending — see §14)
+# Semantic search via the MCP server (the API's movie endpoints ride this same path)
 npx @modelcontextprotocol/inspector   # → SSE, http://localhost:8000/sse, call search_movies_by_description
 ```
 
@@ -305,8 +306,8 @@ extension, and the API's `users` table.
 - **Dimensionality:** **768**. The pgvector column is declared `vector(768)` and `EMBEDDING_DIM=768`
   in [.env.example](.env.example) — the column and model **must** agree or loads fail.
 - The compose file also carries a **HuggingFace Text Embeddings Inference (TEI)** service on `:8001`
-  serving the same model as an alternative HTTP backend (currently what the API's
-  `OllamaSettings__OllamaBaseUrl` points at).
+  serving the same model as an alternative HTTP backend. The API itself never embeds — its search
+  queries are embedded by the MCP server.
 
 ### How the embedding containers are wired into Docker Compose
 
@@ -360,12 +361,15 @@ uvicorn via the ASGI factory ([asgi.py](mcp-server/src/server/asgi.py)).
 
 ### Available tools
 
-All five tools from the spec are registered in [tools.py](mcp-server/src/server/tools.py); FastMCP
-derives input schemas from the type-annotated signatures. `top_k` is clamped to [1, 50].
+All five tools from the spec — plus `get_movie_by_id`, which backs the .NET API's by-id endpoint —
+are registered in [tools.py](mcp-server/src/server/tools.py); FastMCP derives input schemas from
+the type-annotated signatures. `top_k` is clamped to [1, 50]. The .NET API is itself an MCP client
+of this server: every `/api/v1/movies/*` and `/api/v1/stats` read maps to one of these tools.
 
 | Tool | Description | Arguments |
 |------|-------------|-----------|
 | `search_movies_by_description` | Semantic vector search with optional metadata filters; returns ranked results with similarity scores | `query: str`, `top_k: int = 10`, `genre_filter: str \| None`, `min_imdb_rating: float \| None`, `mpaa_rating: str \| None`, `decade: int \| None` |
+| `get_movie_by_id` | Retrieve a movie by its stable UUID (null when unknown) | `movie_id: str` |
 | `get_movie_by_title` | Retrieve a movie by exact or fuzzy title match | `title: str` |
 | `get_similar_movies` | Most semantically similar movies to a given movie (UUID validated; unknown IDs raise a clear error) | `movie_id: str`, `top_k: int = 5` |
 | `list_genres` | All distinct genres in the dataset | — |
@@ -393,16 +397,14 @@ with low Rotten Tomatoes scores"*.
 
 **Location:** [api/MovieSearch/](api/MovieSearch/) — a layered .NET 10 solution
 (`Domain` / `Application` / `Infrastructure` / `Api`) using **Carter** endpoint slices, **Wolverine**
-as the in-process CQRS mediator, URL-segment **API versioning**, EF Core + **Pgvector** for
-similarity search, and **Redis**-backed response caching in the query handlers.
+as the in-process CQRS mediator, URL-segment **API versioning**, the official
+**ModelContextProtocol** C# SDK as the movie data client (all movie/stats reads are MCP tool calls
+against the MCP server — the API never queries the movies tables), EF Core for the API-owned
+`users` table, and **Redis**-backed response caching in the query handlers.
 
 **Base URL:** `http://localhost:8080` · OpenAPI spec at `/openapi/v1.json` (Development only).
 All `/api/v1/movies/*` and `/api/v1/stats` endpoints require a valid JWT (see
 [Authentication](#10-authentication)).
-
-> ⚠️ `search` and `{id}/similar` depend on query embeddings; the API's `EmbeddingsService` is
-> currently a stub that throws, so those two endpoints fail until it is wired to the embedding
-> container (§14). The remaining endpoints work against the pipeline-loaded data.
 
 ### `GET /health` — liveness + readiness (no auth)
 
@@ -410,10 +412,10 @@ All `/api/v1/movies/*` and `/api/v1/stats` endpoints require a valid JWT (see
 curl http://localhost:8080/health
 ```
 ```json
-{ "status": "Healthy", "dependencies": { "postgres": "Healthy" } }
+{ "status": "Healthy", "dependencies": { "postgres": "Healthy", "mcp-server": "Healthy" } }
 ```
 
-### `GET /api/v1/movies/search` — natural-language search *(⚠️ blocked on embedding client)*
+### `GET /api/v1/movies/search` — natural-language search
 
 Query params: `q` (required), `top_k` (default 10, max 50), `genre`, `min_imdb_rating`,
 `mpaa_rating`, `decade`. Results are cached in Redis per query+filters.
@@ -442,7 +444,16 @@ curl http://localhost:8080/api/v1/movies/<GUID> -H "Authorization: Bearer $TOKEN
 
 Returns the full movie record (metadata, ratings, `budget_tier`, `decade`, …) or `404`.
 
-### `GET /api/v1/movies/{id}/similar` — similar movies *(⚠️ blocked on embedding client)*
+### `GET /api/v1/movies/by-title` — get movie by title
+
+Exact (case-insensitive) title match first, then fuzzy substring match — same semantics as the
+MCP `get_movie_by_title` tool it calls. Returns the full movie record or `404`.
+
+```bash
+curl "http://localhost:8080/api/v1/movies/by-title?title=terminator" -H "Authorization: Bearer $TOKEN"
+```
+
+### `GET /api/v1/movies/{id}/similar` — similar movies
 
 ```bash
 curl "http://localhost:8080/api/v1/movies/<GUID>/similar?top_k=5" -H "Authorization: Bearer $TOKEN"
@@ -525,7 +536,8 @@ dashboard provisioning, and the `movie-search.json` dashboard are committed.
 | **Logs** | Structured console logging (.NET `Microsoft.Extensions.Logging`; Python JSON logs with request IDs + tool timings) | `docker compose logs -f <service>` |
 
 Health checks: the API's `/health` reports overall + per-dependency status (Postgres via a
-DbContext check) and backs the compose healthcheck; the MCP server exposes its own `/health`.
+DbContext check, the MCP server via an MCP ping over the shared session) and backs the compose
+healthcheck; the MCP server exposes its own `/health`.
 
 > ⚠️ Rate limiting (60 req/min per user) and the p95 < 500ms load-test validation described in the
 > brief are not implemented yet — Redis response caching in the search/stats handlers is.
@@ -559,9 +571,9 @@ resource tagged `Environment`, `Project`, `ManagedBy`.
 
 ## 13. Running Tests
 
-⚠️ **PLACEHOLDER — no real tests yet.** The .NET solution contains two template test projects
-(`tests/MovieSearch.Tests`, `tests/Tests`) with only generated stubs; the Python services have no
-test suites. Intended commands once suites land:
+The .NET solution has a small xUnit suite (`tests/Tests`) covering the MCP tool-result decoding
+and the password hasher; ⚠️ the Python services have no test suites yet, and there are no
+integration/load tests. Commands:
 
 ### Unit tests
 
@@ -597,32 +609,25 @@ k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080 -e TOKEN=$TOKEN
 
 **Current limitations**
 
-- 🚧 **API embedding client is a stub** — `Infrastructure/Services/EmbeddingsService` throws
-  `NotImplementedException`, so `GET /api/v1/movies/search` and `…/similar` fail through the API.
-  Everything else in the API (auth, by-id, genres, stats, caching, observability) works, and the
-  same search works end to end through the **MCP server**.
-- The API queries pgvector **directly** rather than through the MCP server; compose passes
-  `MCP__ServerUrl` but no MCP client exists in the API yet.
-- **Compose build paths:** the `api` service's build context doesn't yet point at
-  [api/MovieSearch/src/Api/Dockerfile](api/MovieSearch/src/Api/Dockerfile), and the bonus `atlas`
-  service references a `scripts/Dockerfile` that doesn't exist.
-- **No tests** — the committed test projects are template stubs; no Python tests.
+- **The MCP server is a hard dependency of the API's movie endpoints** — all movie/stats reads are
+  MCP tool calls, so if the MCP server is down those endpoints fail (auth and cached responses
+  still work). The API `/health` surfaces this as the `mcp-server` dependency.
+- The API↔MCP hop adds a network round-trip per uncached read (Redis response caching in the
+  handlers absorbs repeat queries); no latency benchmark of the new path has been run yet.
 - **No CI/CD** ([.github/workflows/](.github/workflows/) empty) and **no Terraform**
   ([terraform/](terraform/) empty).
-- **No rate limiting** and no exported [openapi.json](openapi.json); the OpenAPI spec is served only
+- No exported [openapi.json](openapi.json); the OpenAPI spec is served only
   in the Development environment.
-- Two embedding backends (Ollama + TEI) are both in compose; the API's settings point at TEI while
-  the pipeline/MCP use Ollama — consolidate on one before wiring the API client.
+- Two embedding backends (Ollama + TEI) are both in compose; only Ollama is used (pipeline + MCP
+  server) — the TEI service could be dropped.
 - Ollama pulls model weights on first start (cold start ~1–2 min); healthchecks account for this.
 
 **Future improvements**
 
-- Wire the API's `EmbeddingsService` to the embedding container (same model/dim as the pipeline) to
-  unblock search/similar, then delete the unused backend.
-- Fix the compose build contexts so `docker compose up --build` runs end to end on a clean machine.
-- Real test suites: pytest for pipeline/MCP, xUnit unit + integration for the API, k6 load test
-  validating p95 < 500ms.
-- Rate limiting (60 req/min per authenticated user) and cache-TTL tuning.
+- Integration tests that exercise the API → MCP server → pgvector path end to end
+  (unit tests currently cover the MCP result decoding and auth primitives).
+- Real test suites: pytest for pipeline/MCP, k6 load test validating p95 < 500ms.
+- Cache-TTL tuning.
 - Hybrid search (vector similarity + full-text/metadata filters) with re-ranking.
 - Tune the pgvector **HNSW** index (`m`, `ef_search`) and benchmark recall vs. latency at scale.
 - CI/CD pipelines (lint, test, build, Compose integration, `terraform apply` to dev→prod) and the
