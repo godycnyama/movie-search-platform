@@ -129,7 +129,9 @@ class MovieResult(BaseModel):
     )
 
     @classmethod
-    def from_record(cls, record: dict[str, Any] | Any, similarity: float | None = None) -> "MovieResult":
+    def from_record(
+        cls, record: dict[str, Any] | Any, similarity: float | None = None
+    ) -> "MovieResult":
         """Builds a result from an asyncpg record (mapping access by column name)."""
         return cls(
             id=record["id"],

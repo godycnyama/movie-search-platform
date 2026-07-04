@@ -11,8 +11,9 @@ import logging
 
 import uvicorn
 from fastmcp import FastMCP
+from prometheus_client import CONTENT_TYPE_LATEST, generate_latest
 from starlette.requests import Request
-from starlette.responses import JSONResponse
+from starlette.responses import JSONResponse, Response
 
 from config import Settings
 from server.db import Database
@@ -44,6 +45,11 @@ def create_server(settings: Settings, db: Database, embeddings: OllamaEmbeddings
             {"status": status, "dependencies": {"postgres": postgres}},
             status_code=200 if status == "healthy" else 503,
         )
+
+    @mcp.custom_route("/metrics", methods=["GET"])
+    async def metrics(request: Request) -> Response:
+        """Prometheus exposition (scraped per monitoring/prometheus.yml)."""
+        return Response(generate_latest(), media_type=CONTENT_TYPE_LATEST)
 
     return mcp
 

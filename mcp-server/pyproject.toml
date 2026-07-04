@@ -1,7 +1,7 @@
 [project]
 name = "mcp-server"
 version = "0.1.0"
-description = "Add your description here"
+description = "FastMCP server exposing the movie catalogue as semantic-search tools (README §8)"
 readme = "README.md"
 requires-python = ">=3.13"
 dependencies = [
@@ -9,8 +9,28 @@ dependencies = [
     "fastmcp>=3.4.2",
     "httpx>=0.28.1",
     "pgvector>=0.4.2",
+    "prometheus-client>=0.21",
     "psycopg[binary]>=3.3.4",
     "pydantic-settings>=2.14.2",
     "sqlmodel>=0.0.39",
     "uvicorn>=0.49.0",
 ]
+
+[dependency-groups]
+dev = [
+    "pytest>=8.3",
+    "pytest-asyncio>=0.25",
+    "ruff>=0.9",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+asyncio_mode = "auto"
+
+[tool.ruff]
+line-length = 100
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B"]

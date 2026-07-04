@@ -21,6 +21,7 @@ from server.constants import MAX_TOP_K
 from server.db import Database
 from server.embeddings import OllamaEmbeddingsClient
 from server.logging_config import request_id_var
+from server.metrics import TOOL_CALLS, TOOL_DURATION_SECONDS
 from server.models import DatasetStats, MovieResult
 
 logger = logging.getLogger(__name__)
@@ -40,11 +41,14 @@ def register_tools(
         return tool, time.perf_counter()
 
     def _done(tool: str, started: float, result_count: int | None = None) -> None:
+        duration = time.perf_counter() - started
+        TOOL_CALLS.labels(tool=tool).inc()
+        TOOL_DURATION_SECONDS.labels(tool=tool).observe(duration)
         logger.info(
             "tool completed",
             extra={
                 "tool": tool,
-                "duration_ms": round((time.perf_counter() - started) * 1000, 1),
+                "duration_ms": round(duration * 1000, 1),
                 "result_count": result_count,
             },
         )
