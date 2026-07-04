@@ -24,8 +24,8 @@ public static class InfrastructureExtensions
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
-        services.AddOptions<OllamaSettings>()
-                .BindConfiguration(nameof(OllamaSettings))
+        services.AddOptions<McpSettings>()
+                .BindConfiguration(nameof(McpSettings))
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
@@ -48,9 +48,14 @@ public static class InfrastructureExtensions
             // which its default ServiceLocationPolicy.NotAllowed forbids.
             optionsLifetime: ServiceLifetime.Singleton);
 
-        services.AddScoped<IMovieRepository, MovieRepository>();
         services.AddScoped<IUserRepository, UserRepository>();
-        services.AddSingleton<IEmbeddingsService, EmbeddingsService>();
+
+        // Movie reads go through the MCP server, never straight to the movies tables.
+        // The concrete type is also registered so McpServerHealthCheck can ping the
+        // same shared session the endpoints use.
+        services.AddSingleton<McpMovieCatalogService>();
+        services.AddSingleton<IMovieCatalogService>(provider => provider.GetRequiredService<McpMovieCatalogService>());
+
         services.AddSingleton<ICacheService, CacheService>(); // Shares one Redis multiplexer app-wide
         services.AddSingleton<IPasswordHasher, Pbkdf2PasswordHasher>();
         services.AddSingleton<ITokenService, JwtTokenService>();

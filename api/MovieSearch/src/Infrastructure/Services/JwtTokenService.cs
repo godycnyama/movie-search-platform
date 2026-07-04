@@ -12,15 +12,17 @@ namespace Infrastructure.Services;
 /// <summary>
 /// Issues HMAC-SHA256 signed JWTs from <see cref="JwtSettings"/>. Claims use the raw
 /// JWT names ("sub", "email", "role") — inbound claim mapping is disabled on the
-/// bearer middleware to match.
+/// bearer middleware to match. Uses <see cref="IOptionsMonitor{T}"/> so a signing-key
+/// rotation or issuer/audience change takes effect on the next token issued, without
+/// restarting the process.
 /// </summary>
-public sealed class JwtTokenService(IOptions<JwtSettings> jwtOptions) : ITokenService
+public sealed class JwtTokenService(IOptionsMonitor<JwtSettings> jwtOptionsMonitor) : ITokenService
 {
     private static readonly JsonWebTokenHandler TokenHandler = new();
 
     public TokenResponse GenerateToken(User user)
     {
-        var settings = jwtOptions.Value;
+        var settings = jwtOptionsMonitor.CurrentValue;
         var lifetime = TimeSpan.FromMinutes(settings.ExpiryMinutes);
 
         var descriptor = new SecurityTokenDescriptor
