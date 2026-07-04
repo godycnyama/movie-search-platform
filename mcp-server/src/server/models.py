@@ -115,6 +115,9 @@ class MovieResult(BaseModel):
     rotten_tomatoes_rating: int | None = PydanticField(
         default=None, description="Rotten Tomatoes score in [0, 100]."
     )
+    production_budget: int | None = PydanticField(
+        default=None, description="Production budget in USD; null when unknown."
+    )
     running_time_min: int | None = PydanticField(default=None, description="Runtime in minutes.")
     budget_tier: str | None = PydanticField(
         default=None, description="Derived budget bucket (low/mid/high/blockbuster)."
@@ -138,6 +141,7 @@ class MovieResult(BaseModel):
             mpaa_rating=record["mpaa_rating"],
             imdb_rating=record["imdb_rating"],
             rotten_tomatoes_rating=record["rotten_tomatoes_rating"],
+            production_budget=record["production_budget"],
             running_time_min=record["running_time_min"],
             budget_tier=record["budget_tier"],
             decade=record["decade"],

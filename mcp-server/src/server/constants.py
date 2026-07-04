@@ -29,7 +29,8 @@ MAX_TOP_K = 50
 # Columns exposed to MCP clients (everything except the raw vector/text blobs).
 MOVIE_RESULT_COLUMNS = (
     "id, title, release_year, major_genre, director, distributor, mpaa_rating, "
-    "imdb_rating, rotten_tomatoes_rating, running_time_min, budget_tier, decade"
+    "imdb_rating, rotten_tomatoes_rating, production_budget, running_time_min, "
+    "budget_tier, decade"
 )
 
 # --- Logging -------------------------------------------------------------------

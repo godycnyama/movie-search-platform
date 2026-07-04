@@ -1,4 +1,8 @@
-"""The five MCP tools from the assessment spec (§3.1).
+"""The five MCP tools from the assessment spec (§3.1), plus ``get_movie_by_id``.
+
+The extra tool exists because the platform's .NET API serves ALL movie reads
+through this server (it never queries the movies tables directly), and its
+``GET /api/v1/movies/{id}`` endpoint looks movies up by UUID rather than title.
 
 Each tool is fully type-annotated (FastMCP derives the input schema from the
 signature and validates arguments with Pydantic), returns Pydantic models, and
@@ -74,6 +78,25 @@ def register_tools(
         results = [MovieResult.from_record(row, similarity) for row, similarity in hits]
         _done(tool, started, len(results))
         return results
+
+    @mcp.tool()
+    async def get_movie_by_id(movie_id: str) -> MovieResult | None:
+        """Retrieve a specific movie by its stable UUID identifier.
+
+        Returns null when no movie has that id. Backs the platform API's
+        GET /api/v1/movies/{id} endpoint.
+        """
+        tool, started = _trace("get_movie_by_id")
+
+        try:
+            parsed_id = uuid.UUID(movie_id)
+        except ValueError as error:
+            raise ValueError(f"'{movie_id}' is not a valid movie id (UUID expected)") from error
+
+        record = await db.get_movie_by_id(parsed_id)
+        result = MovieResult.from_record(record) if record is not None else None
+        _done(tool, started, 1 if result else 0)
+        return result
 
     @mcp.tool()
     async def get_movie_by_title(title: str) -> MovieResult | None:
