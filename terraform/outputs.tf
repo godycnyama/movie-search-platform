@@ -11,26 +11,13 @@ output "api_base_url" {
 }
 
 output "ecr_repository_urls" {
-  description = "ECR repository URLs keyed by image name (api, mcp-server, pipeline)."
+  description = "ECR repository URLs keyed by image name (api, mcp-server)."
   value       = module.ecr.repository_urls
 }
 
 output "ecs_cluster_name" {
-  description = "ECS cluster name (used by CD to run the one-off pipeline task)."
+  description = "ECS cluster name."
   value       = module.ecs.cluster_name
-}
-
-output "pipeline_task_definition_arn" {
-  description = "Task definition ARN for the one-off data pipeline run."
-  value       = module.ecs.pipeline_task_definition_arn
-}
-
-output "pipeline_network_configuration" {
-  description = "Network settings for `aws ecs run-task` (private subnets + tasks SG)."
-  value = {
-    subnets         = module.networking.private_subnet_ids
-    security_groups = [module.networking.tasks_security_group_id]
-  }
 }
 
 output "github_deploy_role_arn" {

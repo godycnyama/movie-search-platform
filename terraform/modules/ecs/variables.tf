@@ -16,7 +16,7 @@ variable "private_subnet_ids" {
 }
 
 variable "tasks_sg_id" {
-  description = "Security group attached to all Fargate tasks (and the EFS mount targets)."
+  description = "Security group attached to all Fargate tasks."
   type        = string
 }
 
@@ -35,14 +35,6 @@ variable "mcp_image" {
   type = string
 }
 
-variable "pipeline_image" {
-  type = string
-}
-
-variable "ollama_image" {
-  type = string
-}
-
 # --- Sizing -----------------------------------------------------------------
 
 variable "api_cpu" {
@@ -58,22 +50,6 @@ variable "mcp_cpu" {
 }
 
 variable "mcp_memory" {
-  type = number
-}
-
-variable "ollama_cpu" {
-  type = number
-}
-
-variable "ollama_memory" {
-  type = number
-}
-
-variable "pipeline_cpu" {
-  type = number
-}
-
-variable "pipeline_memory" {
   type = number
 }
 
@@ -132,16 +108,24 @@ variable "mcp_transport" {
   type = string
 }
 
-variable "embedding_model" {
-  type = string
+variable "env" {
+  description = "Value of ENV passed to the Python services (local | dev | prod)."
+  type        = string
+}
+
+variable "bedrock_region" {
+  description = "Region for the Bedrock runtime; empty string uses the deployment region."
+  type        = string
+  default     = ""
+}
+
+variable "bedrock_embedding_model_id" {
+  description = "Bedrock embedding model id (pipeline and MCP server must agree)."
+  type        = string
 }
 
 variable "embedding_dim" {
   type = number
-}
-
-variable "pipeline_version" {
-  type = string
 }
 
 variable "jwt_issuer" {

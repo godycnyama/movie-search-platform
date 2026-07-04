@@ -28,14 +28,8 @@ variable "az_count" {
 # --- Images -------------------------------------------------------------------
 
 variable "image_tag" {
-  description = "Tag of the api/mcp-server/pipeline images to deploy (CD passes the commit SHA)."
+  description = "Tag of the api/mcp-server images to deploy (CD passes the commit SHA)."
   type        = string
-}
-
-variable "ollama_image" {
-  description = "Ollama server image (embedding backend). Pin a version for reproducible deploys."
-  type        = string
-  default     = "ollama/ollama:0.5.13"
 }
 
 # --- ECS sizing ---------------------------------------------------------------
@@ -62,30 +56,6 @@ variable "mcp_memory" {
   description = "Fargate memory (MiB) for the MCP server task."
   type        = number
   default     = 1024
-}
-
-variable "ollama_cpu" {
-  description = "Fargate CPU units for the Ollama task (embedding inference is CPU-bound)."
-  type        = number
-  default     = 1024
-}
-
-variable "ollama_memory" {
-  description = "Fargate memory (MiB) for the Ollama task (must hold the embedding model)."
-  type        = number
-  default     = 4096
-}
-
-variable "pipeline_cpu" {
-  description = "Fargate CPU units for the one-off pipeline task."
-  type        = number
-  default     = 1024
-}
-
-variable "pipeline_memory" {
-  description = "Fargate memory (MiB) for the one-off pipeline task."
-  type        = number
-  default     = 2048
 }
 
 variable "service_min_count" {
@@ -165,22 +135,22 @@ variable "mcp_transport" {
   }
 }
 
-variable "embedding_model" {
-  description = "Ollama embedding model; MUST match what the pipeline embedded the catalogue with."
+variable "bedrock_region" {
+  description = "Region for the Bedrock runtime; empty string uses the deployment region."
   type        = string
-  default     = "nomic-embed-text"
+  default     = ""
+}
+
+variable "bedrock_embedding_model_id" {
+  description = "Bedrock embedding model id (Titan Text Embeddings V2 = 1024 dims). Pipeline and MCP server must agree."
+  type        = string
+  default     = "amazon.titan-embed-text-v2:0"
 }
 
 variable "embedding_dim" {
-  description = "Embedding dimensionality; must match the pgvector vector(768) column."
+  description = "Embedding dimensionality; must match the model + pgvector vector(N) column (Titan v2=1024)."
   type        = number
-  default     = 768
-}
-
-variable "pipeline_version" {
-  description = "Version stamp the pipeline writes onto every row."
-  type        = string
-  default     = "0.1.0"
+  default     = 1024
 }
 
 variable "jwt_issuer" {

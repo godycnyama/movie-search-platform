@@ -1,14 +1,20 @@
-# ECS Fargate cluster hosting three services (api, mcp-server, ollama) plus the
-# one-off pipeline task definition. Internal traffic is addressed through a
-# Cloud Map private DNS namespace:
+# ECS Fargate cluster hosting two services (api, mcp-server). Internal traffic
+# is addressed through a Cloud Map private DNS namespace:
 #
-#   api ──http──► mcp-server.<ns>:8000 ──http──► ollama.<ns>:11434
+#   api ──http──► mcp-server.<ns>:8000
+#
+# Query/document embeddings run on Amazon Bedrock (no in-cluster inference).
+# The data pipeline is not deployed here — it runs locally via docker-compose.
 #
 # Connection strings and credentials are injected from a single Secrets Manager
 # "runtime" secret (JSON keys referenced per container) — nothing sensitive in
 # task-definition environment blocks.
 
 data "aws_region" "current" {}
+
+locals {
+  bedrock_region = var.bedrock_region != "" ? var.bedrock_region : data.aws_region.current.name
+}
 
 resource "aws_ecs_cluster" "this" {
   name = "${var.name_prefix}-cluster"
@@ -23,7 +29,7 @@ resource "aws_ecs_cluster" "this" {
 
 resource "aws_service_discovery_private_dns_namespace" "this" {
   name        = "${var.name_prefix}.internal"
-  description = "Internal DNS for api -> mcp-server -> ollama."
+  description = "Internal DNS for api -> mcp-server."
   vpc         = var.vpc_id
 }
 
@@ -41,30 +47,14 @@ resource "aws_service_discovery_service" "mcp" {
   }
 }
 
-resource "aws_service_discovery_service" "ollama" {
-  name = "ollama"
-
-  dns_config {
-    namespace_id   = aws_service_discovery_private_dns_namespace.this.id
-    routing_policy = "MULTIVALUE"
-
-    dns_records {
-      type = "A"
-      ttl  = 10
-    }
-  }
-}
-
 locals {
-  mcp_host    = "mcp-server.${aws_service_discovery_private_dns_namespace.this.name}"
-  ollama_host = "ollama.${aws_service_discovery_private_dns_namespace.this.name}"
-  ollama_url  = "http://ollama.${aws_service_discovery_private_dns_namespace.this.name}:11434"
+  mcp_host = "mcp-server.${aws_service_discovery_private_dns_namespace.this.name}"
 }
 
 # --- Logs -----------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "service" {
-  for_each = toset(["api", "mcp-server", "ollama", "pipeline", "xray"])
+  for_each = toset(["api", "mcp-server", "xray"])
 
   name              = "/ecs/${var.name_prefix}/${each.key}"
   retention_in_days = var.log_retention_days
@@ -171,23 +161,17 @@ resource "aws_iam_role_policy" "xray_write" {
   policy = data.aws_iam_policy_document.xray_write.json
 }
 
-# --- EFS: Ollama model cache -------------------------------------------------------
-
-resource "aws_efs_file_system" "ollama" {
-  creation_token = "${var.name_prefix}-ollama-models"
-  encrypted      = true
-
-  lifecycle_policy {
-    transition_to_ia = "AFTER_30_DAYS"
+# Bedrock embeddings backend. Scoped to the one configured foundation model,
+# any region.
+data "aws_iam_policy_document" "bedrock_invoke" {
+  statement {
+    actions   = ["bedrock:InvokeModel"]
+    resources = ["arn:aws:bedrock:*::foundation-model/${var.bedrock_embedding_model_id}"]
   }
-
-  tags = { Name = "${var.name_prefix}-ollama-models" }
 }
 
-resource "aws_efs_mount_target" "ollama" {
-  count = length(var.private_subnet_ids)
-
-  file_system_id  = aws_efs_file_system.ollama.id
-  subnet_id       = var.private_subnet_ids[count.index]
-  security_groups = [var.tasks_sg_id] # tasks SG self-ingress covers NFS 2049
+resource "aws_iam_role_policy" "bedrock_invoke" {
+  name   = "bedrock-invoke-embeddings"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.bedrock_invoke.json
 }

@@ -14,14 +14,6 @@ output "ecs_cluster_name" {
   value = module.platform.ecs_cluster_name
 }
 
-output "pipeline_task_definition_arn" {
-  value = module.platform.pipeline_task_definition_arn
-}
-
-output "pipeline_network_configuration" {
-  value = module.platform.pipeline_network_configuration
-}
-
 output "github_deploy_role_arn" {
   value = module.platform.github_deploy_role_arn
 }

@@ -6,5 +6,5 @@ variable "name_prefix" {
 variable "image_names" {
   description = "Repository names created under the prefix."
   type        = list(string)
-  default     = ["api", "mcp-server", "pipeline"]
+  default     = ["api", "mcp-server"]
 }

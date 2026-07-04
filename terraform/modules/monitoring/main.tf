@@ -147,7 +147,7 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage" {
 
 resource "aws_xray_sampling_rule" "default" {
   rule_name      = "${var.name_prefix}-default"
-  priority       = 10000
+  priority       = 9999
   version        = 1
   reservoir_size = 1
   fixed_rate     = 0.05

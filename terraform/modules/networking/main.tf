@@ -1,5 +1,5 @@
 # VPC with public subnets (ALB, NAT) and private subnets (Fargate tasks, RDS,
-# ElastiCache, EFS). One NAT gateway keeps costs down; raise to one-per-AZ for
+# ElastiCache). One NAT gateway keeps costs down; raise to one-per-AZ for
 # hard multi-AZ egress requirements. VPC Flow Logs go to CloudWatch.
 
 data "aws_availability_zones" "available" {
@@ -144,7 +144,7 @@ resource "aws_security_group" "tasks" {
   }
 
   ingress {
-    description = "Service-to-service (api->mcp:8000, mcp->ollama:11434, tasks->EFS:2049)"
+    description = "Service-to-service (api->mcp:8000)"
     from_port   = 0
     to_port     = 0
     protocol    = "-1"

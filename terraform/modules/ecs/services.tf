@@ -1,31 +1,4 @@
-# Services + autoscaling. api and mcp-server scale between min and max on CPU;
-# ollama runs a single task (its model cache lives on EFS, and query embedding
-# is fast once the model is resident).
-
-resource "aws_ecs_service" "ollama" {
-  name            = "${var.name_prefix}-ollama"
-  cluster         = aws_ecs_cluster.this.id
-  task_definition = aws_ecs_task_definition.ollama.arn
-  desired_count   = 1
-  launch_type     = "FARGATE"
-
-  enable_execute_command = true
-
-  network_configuration {
-    subnets          = var.private_subnet_ids
-    security_groups  = [var.tasks_sg_id]
-    assign_public_ip = false
-  }
-
-  service_registries {
-    registry_arn = aws_service_discovery_service.ollama.arn
-  }
-
-  deployment_circuit_breaker {
-    enable   = true
-    rollback = true
-  }
-}
+# Services + autoscaling. api and mcp-server scale between min and max on CPU.
 
 resource "aws_ecs_service" "mcp" {
   name            = "${var.name_prefix}-mcp-server"

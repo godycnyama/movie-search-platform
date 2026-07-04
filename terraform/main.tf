@@ -1,12 +1,12 @@
 # Platform composition: wires the child modules into the deployable stack.
 #
-#   ALB (public) ──► api (Fargate) ──MCP──► mcp-server (Fargate) ──► Ollama (Fargate)
+#   ALB (public) ──► api (Fargate) ──MCP──► mcp-server (Fargate) ──► Bedrock (embeddings)
 #                      │  EF Core (users)        │ asyncpg + pgvector
 #                      ▼                         ▼
 #                    RDS PostgreSQL 16 (pgvector, private subnets)
 #                      + ElastiCache Redis (API response cache)
 #
-# The pipeline runs as a one-off ECS task (CD triggers it on demand).
+# The data pipeline is not deployed to AWS — it runs locally via docker-compose.
 
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
@@ -85,19 +85,13 @@ module "ecs" {
   tasks_sg_id        = module.networking.tasks_security_group_id
   alb_target_group   = module.alb.target_group_arn
 
-  api_image      = "${module.ecr.repository_urls["api"]}:${var.image_tag}"
-  mcp_image      = "${module.ecr.repository_urls["mcp-server"]}:${var.image_tag}"
-  pipeline_image = "${module.ecr.repository_urls["pipeline"]}:${var.image_tag}"
-  ollama_image   = var.ollama_image
+  api_image = "${module.ecr.repository_urls["api"]}:${var.image_tag}"
+  mcp_image = "${module.ecr.repository_urls["mcp-server"]}:${var.image_tag}"
 
-  api_cpu         = var.api_cpu
-  api_memory      = var.api_memory
-  mcp_cpu         = var.mcp_cpu
-  mcp_memory      = var.mcp_memory
-  ollama_cpu      = var.ollama_cpu
-  ollama_memory   = var.ollama_memory
-  pipeline_cpu    = var.pipeline_cpu
-  pipeline_memory = var.pipeline_memory
+  api_cpu    = var.api_cpu
+  api_memory = var.api_memory
+  mcp_cpu    = var.mcp_cpu
+  mcp_memory = var.mcp_memory
 
   service_min_count = var.service_min_count
   service_max_count = var.service_max_count
@@ -112,13 +106,18 @@ module "ecs" {
   redis_auth_token = module.secrets.redis_auth_token
   jwt_signing_key  = module.secrets.jwt_signing_key
 
-  mcp_transport    = var.mcp_transport
-  embedding_model  = var.embedding_model
-  embedding_dim    = var.embedding_dim
-  pipeline_version = var.pipeline_version
-  jwt_issuer       = var.jwt_issuer
-  jwt_audience     = var.jwt_audience
-  log_level        = var.log_level
+  mcp_transport = var.mcp_transport
+
+  # Embedding backend. The AWS environments use Bedrock; ENV is the environment
+  # name so the Python services map dev/prod -> Bedrock.
+  env                        = var.environment
+  bedrock_region             = var.bedrock_region
+  bedrock_embedding_model_id = var.bedrock_embedding_model_id
+  embedding_dim              = var.embedding_dim
+
+  jwt_issuer   = var.jwt_issuer
+  jwt_audience = var.jwt_audience
+  log_level    = var.log_level
 
   log_retention_days = var.log_retention_days
 }
