@@ -15,7 +15,11 @@ using Wolverine;
 
 namespace Application.Features.Auth;
 
-/// <summary>Creates a "reader" account and returns a bearer token (<c>POST /api/v1/auth/signup</c>).</summary>
+/// <summary>
+/// Creates an account and returns a bearer token (<c>POST /api/v1/auth/signup</c>).
+/// The very first account is bootstrapped as "admin"; every account after that is "reader"
+/// (further admins are promoted via <c>POST /api/v1/auth/assignadminrole</c>).
+/// </summary>
 public sealed record SignUpCommand(string Email, string Password);
 
 public static class SignUpHandler
@@ -37,20 +41,23 @@ public static class SignUpHandler
                 return Result<TokenResponse>.Failure(UserErrors.EmailTaken(email));
             }
 
+            // Day-zero bootstrap: the first account ever created becomes the admin.
+            var isFirstUser = !await userRepository.AnyAsync(cancellationToken);
+
             var now = DateTimeOffset.UtcNow;
             var user = new User
             {
                 Id = Guid.NewGuid(),
                 Email = email,
                 PasswordHash = passwordHasher.Hash(command.Password),
-                Role = UserRoles.Reader,
+                Role = isFirstUser ? UserRoles.Admin : UserRoles.Reader,
                 CreatedAt = now,
                 UpdatedAt = now,
             };
 
             await userRepository.AddAsync(user, cancellationToken);
 
-            logger.LogInformation("User {UserId} signed up", user.Id);
+            logger.LogInformation("User {UserId} signed up with role {Role}", user.Id, user.Role);
             return Result<TokenResponse>.Success(tokenService.GenerateToken(user));
         }
         catch (Exception exception)

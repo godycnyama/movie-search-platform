@@ -1,6 +1,5 @@
 using Application.Common;
 using Application.Mappings;
-using Application.Repositories;
 using Application.Requests;
 using Application.Responses;
 using Application.Services;
@@ -23,7 +22,7 @@ public static class GetSimilarMoviesHandler
     /// <summary>Returns <c>null</c> when the source movie does not exist (the endpoint maps that to 404).</summary>
     public static async Task<SimilarMoviesResponse?> Handle(
         GetSimilarMoviesQuery query,
-        IMovieRepository movieRepository,
+        IMovieCatalogService movieCatalog,
         ICacheService cacheService,
         ILogger<GetSimilarMoviesQuery> logger,
         CancellationToken cancellationToken)
@@ -35,7 +34,7 @@ public static class GetSimilarMoviesHandler
                 CacheKeys.Similar(query.Id, query.TopK),
                 async ct =>
                 {
-                    var hits = await movieRepository.GetSimilarAsync(query.Id, query.TopK, ct);
+                    var hits = await movieCatalog.GetSimilarAsync(query.Id, query.TopK, ct);
                     if (hits is null)
                     {
                         return null;

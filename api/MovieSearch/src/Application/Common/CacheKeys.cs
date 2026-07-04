@@ -31,6 +31,8 @@ internal static class CacheKeys
 
     public static string Movie(Guid id) => $"movie:{id}";
 
+    public static string MovieByTitle(string title) => $"movie:title={Normalize(title)}";
+
     public static string Similar(Guid id, int topK) => $"similar:{id}:k={topK}";
 
     public static string Genres() => "genres";

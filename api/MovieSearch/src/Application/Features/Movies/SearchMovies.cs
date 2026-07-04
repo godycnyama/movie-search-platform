@@ -1,6 +1,5 @@
 using Application.Common;
 using Application.Mappings;
-using Application.Repositories;
 using Application.Requests;
 using Application.Responses;
 using Application.Services;
@@ -27,8 +26,7 @@ public static class SearchMoviesHandler
 {
     public static async Task<SearchMoviesResponse> Handle(
         SearchMoviesQuery query,
-        IEmbeddingsService embeddingsService,
-        IMovieRepository movieRepository,
+        IMovieCatalogService movieCatalog,
         ICacheService cacheService,
         ILogger<SearchMoviesQuery> logger,
         CancellationToken cancellationToken)
@@ -39,10 +37,9 @@ public static class SearchMoviesHandler
                 CacheKeys.Search(query.Q, query.TopK, query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade),
                 async ct =>
                 {
-                    var queryEmbedding = await embeddingsService.GenerateEmbeddingAsync(query.Q, ct);
-
+                    // The MCP server embeds the query and runs the pgvector search.
                     var filters = new MovieSearchFilters(query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
-                    var hits = await movieRepository.SearchAsync(queryEmbedding, filters, query.TopK, ct);
+                    var hits = await movieCatalog.SearchAsync(query.Q, filters, query.TopK, ct);
 
                     return new SearchMoviesResponse
                     {

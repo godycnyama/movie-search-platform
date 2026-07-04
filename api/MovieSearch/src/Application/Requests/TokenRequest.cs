@@ -4,7 +4,7 @@ using System.Text.Json.Serialization;
 namespace Application.Requests;
 
 /// <summary>
-/// Client-credentials payload for <c>POST /auth/token</c> (README §10).
+/// Client-credentials payload for <c>POST /auth/token</c>.
 /// </summary>
 public class TokenRequest
 {

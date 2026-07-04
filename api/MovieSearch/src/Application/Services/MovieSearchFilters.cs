@@ -1,8 +1,8 @@
-namespace Application.Repositories;
+namespace Application.Services;
 
 /// <summary>
 /// Optional metadata filters applied before vector ranking in
-/// <see cref="IMovieRepository.SearchAsync"/>. All members are combined with AND;
+/// <see cref="IMovieCatalogService.SearchAsync"/>. All members are combined with AND;
 /// a <c>null</c> member means "no filter on this field".
 /// </summary>
 /// <param name="Genre">Exact match on <c>major_genre</c>.</param>

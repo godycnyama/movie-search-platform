@@ -1,5 +1,4 @@
 using Application.Common;
-using Application.Repositories;
 using Application.Responses;
 using Application.Services;
 using Carter;
@@ -18,7 +17,7 @@ public static class GetStatsHandler
 {
     public static async Task<StatsResponse> Handle(
         GetStatsQuery query,
-        IMovieRepository movieRepository,
+        IMovieCatalogService movieCatalog,
         ICacheService cacheService,
         ILogger<GetStatsQuery> logger,
         CancellationToken cancellationToken)
@@ -29,7 +28,7 @@ public static class GetStatsHandler
                 CacheKeys.Stats(),
                 async ct =>
                 {
-                    var statistics = await movieRepository.GetStatisticsAsync(ct);
+                    var statistics = await movieCatalog.GetStatisticsAsync(ct);
 
                     return new StatsResponse
                     {

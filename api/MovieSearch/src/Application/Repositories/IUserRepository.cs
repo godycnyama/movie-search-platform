@@ -15,6 +15,9 @@ public interface IUserRepository
 
     Task<bool> EmailExistsAsync(string email, CancellationToken cancellationToken = default);
 
+    /// <summary>True if at least one user account exists (used to bootstrap the first admin).</summary>
+    Task<bool> AnyAsync(CancellationToken cancellationToken = default);
+
     /// <summary>Inserts and persists a new user.</summary>
     Task AddAsync(User user, CancellationToken cancellationToken = default);
 

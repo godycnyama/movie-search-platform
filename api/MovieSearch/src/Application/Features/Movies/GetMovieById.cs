@@ -1,6 +1,5 @@
 using Application.Common;
 using Application.Mappings;
-using Application.Repositories;
 using Application.Responses;
 using Application.Services;
 using Carter;
@@ -20,7 +19,7 @@ public static class GetMovieByIdHandler
 {
     public static async Task<MovieResponse?> Handle(
         GetMovieByIdQuery query,
-        IMovieRepository movieRepository,
+        IMovieCatalogService movieCatalog,
         ICacheService cacheService,
         ILogger<GetMovieByIdQuery> logger,
         CancellationToken cancellationToken)
@@ -32,7 +31,7 @@ public static class GetMovieByIdHandler
                 CacheKeys.Movie(query.Id),
                 async ct =>
                 {
-                    var movie = await movieRepository.GetByIdAsync(query.Id, ct);
+                    var movie = await movieCatalog.GetByIdAsync(query.Id, ct);
                     return movie?.ToMovieResponse();
                 },
                 CacheKeys.MovieTtl,

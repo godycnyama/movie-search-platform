@@ -2,10 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Responses;
 
-/// <summary>
-/// Generic wrapper for paginated list responses. Kept for parity with the reference API
-/// so future admin/list endpoints can adopt it without introducing a new shape.
-/// </summary>
 public class PaginatedResponse<T>
 {
     [JsonPropertyName("items")]

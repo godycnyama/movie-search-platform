@@ -1,4 +1,4 @@
-namespace Application.Repositories;
+namespace Application.Services;
 
 /// <summary>
 /// Dataset-wide aggregates backing <c>GET /api/v1/stats</c> (README §9).

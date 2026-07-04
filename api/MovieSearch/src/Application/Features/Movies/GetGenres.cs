@@ -1,5 +1,4 @@
 using Application.Common;
-using Application.Repositories;
 using Application.Responses;
 using Application.Services;
 using Carter;
@@ -18,7 +17,7 @@ public static class GetGenresHandler
 {
     public static async Task<GenresResponse> Handle(
         GetGenresQuery query,
-        IMovieRepository movieRepository,
+        IMovieCatalogService movieCatalog,
         ICacheService cacheService,
         ILogger<GetGenresQuery> logger,
         CancellationToken cancellationToken)
@@ -29,7 +28,7 @@ public static class GetGenresHandler
                 CacheKeys.Genres(),
                 async ct =>
                 {
-                    var genres = await movieRepository.GetGenresAsync(ct);
+                    var genres = await movieCatalog.GetGenresAsync(ct);
                     return new GenresResponse { Genres = genres.ToList() };
                 },
                 CacheKeys.GenresTtl,
