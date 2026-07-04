@@ -163,6 +163,8 @@ services:
     container_name: msp-pipeline
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}
+      # local -> Ollama container (dev/prod use Bedrock; see pipeline/embedding.py).
+      ENV: ${ENV:-local}
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
@@ -195,6 +197,8 @@ services:
     container_name: msp-mcp-server
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}
+      # local -> Ollama container (dev/prod use Bedrock; see server/embeddings.py).
+      ENV: ${ENV:-local}
       OLLAMA_URL: http://ollama:11434
       EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}

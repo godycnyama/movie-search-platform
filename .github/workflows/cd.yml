@@ -1,8 +1,22 @@
-# CD — build once, deploy dev automatically, promote to prod behind a manual
-# approval (the `production` GitHub environment's required reviewers).
+# CD — triggered when CI completes successfully on master. It never generates a
+# plan itself: it downloads the exact `terraform plan` artifacts CI produced for
+# the same commit, then applies them behind a manual approval gate.
 #
-# AWS access is via OIDC only (aws-actions/configure-aws-credentials assumes
-# the Terraform-created deploy role) — no long-lived keys anywhere.
+#   build-push   build + push the api & mcp-server images to the dev ECR
+#   deploy-dev   apply the reviewed DEV plan  (gated by the `dev` environment)
+#   smoke-dev    health + auth smoke tests against the deployed dev API
+#   deploy-prod  promote images + apply the reviewed PROD plan
+#                (gated by the `production` environment)
+#
+# The approval on each environment IS the inspection gate: before approving,
+# open the triggering CI run and read the plan (the run summary shows it, and the
+# `terraform-plan-<env>` artifact is downloadable). CD then applies that exact
+# saved plan — what you reviewed is what ships.
+#
+# AWS access is via OIDC only (aws-actions/configure-aws-credentials assumes the
+# Terraform-created deploy role) — no long-lived keys anywhere.
+#
+# The data pipeline is NOT deployed here; it runs locally via docker-compose.
 #
 # Required repository VARIABLES (Settings -> Secrets and variables -> Actions):
 #   AWS_REGION           e.g. eu-west-1
@@ -10,8 +24,8 @@
 #   TF_STATE_BUCKET      terraform/bootstrap output state_bucket_name
 #   TF_LOCK_TABLE        terraform/bootstrap output lock_table_name
 #
-# Required GitHub ENVIRONMENTS: `dev`, and `production` with required reviewers
-# (that reviewer approval is the prod gate).
+# Required GitHub ENVIRONMENTS, BOTH with required reviewers (the manual gates):
+#   `dev`  and  `production`
 #
 # FIRST-TIME SETUP: apply each environment once from a workstation
 # (terraform/README.md) so the ECR repositories and the deploy role exist
@@ -20,14 +34,9 @@
 name: CD
 
 on:
-  push:
-    branches: [main, master]
-  workflow_dispatch:
-    inputs:
-      run_pipeline:
-        description: "Run the data pipeline task in dev after deploying"
-        type: boolean
-        default: false
+  workflow_run:
+    workflows: ["CI"]
+    types: [completed]
 
 concurrency:
   group: cd-master
@@ -36,25 +45,29 @@ concurrency:
 permissions:
   id-token: write # OIDC token for AWS
   contents: read
+  actions: read # download CI's plan artifacts from the triggering run
 
 env:
   AWS_REGION: ${{ vars.AWS_REGION }}
-  IMAGE_TAG: ${{ github.sha }}
+  IMAGE_TAG: ${{ github.event.workflow_run.head_sha }}
 
 jobs:
-  ci-gate:
-    name: CI gate
-    uses: ./.github/workflows/ci.yml
-    secrets: inherit
-
   build-push:
     name: Build & push images (dev ECR)
     runs-on: ubuntu-latest
-    needs: ci-gate
+    # Only after a successful CI run for a push to master. If CI failed, was on a
+    # PR, or ran on another branch, this (and everything downstream) is skipped.
+    if: >-
+      github.event.workflow_run.conclusion == 'success'
+      && github.event.workflow_run.event == 'push'
+      && (github.event.workflow_run.head_branch == 'master'
+      || github.event.workflow_run.head_branch == 'main')
     outputs:
       registry: ${{ steps.ecr.outputs.registry }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -90,34 +103,28 @@ jobs:
           cache-from: type=gha,scope=mcp-server
           cache-to: type=gha,scope=mcp-server,mode=max
 
-      - name: Build & push pipeline
-        uses: docker/build-push-action@v6
-        with:
-          # Repo-root context: the image bakes in database/migrations.
-          context: .
-          file: pipeline/Dockerfile
-          push: true
-          tags: |
-            ${{ steps.ecr.outputs.registry }}/movie-search-dev/pipeline:${{ env.IMAGE_TAG }}
-            ${{ steps.ecr.outputs.registry }}/movie-search-dev/pipeline:latest
-          cache-from: type=gha,scope=pipeline
-          cache-to: type=gha,scope=pipeline,mode=max
-
   deploy-dev:
-    name: Deploy dev (terraform apply)
+    name: Deploy dev (apply reviewed plan)
     runs-on: ubuntu-latest
     needs: build-push
-    environment: dev
+    environment: dev # required reviewers here gate the apply — inspect the plan first
     outputs:
       api_base_url: ${{ steps.outputs.outputs.api_base_url }}
-      cluster: ${{ steps.outputs.outputs.cluster }}
-      pipeline_task_def: ${{ steps.outputs.outputs.pipeline_task_def }}
-      pipeline_network: ${{ steps.outputs.outputs.pipeline_network }}
     defaults:
       run:
         working-directory: terraform/environments/dev
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
+
+      - name: Download reviewed dev plan (from the CI run)
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-dev
+          path: terraform/environments/dev
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -126,7 +133,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.15.7"
           terraform_wrapper: false
 
       - name: Terraform init
@@ -138,22 +145,15 @@ jobs:
             -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform apply
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          terraform apply -auto-approve -input=false \
-            -var "image_tag=${IMAGE_TAG}" \
-            -var "github_repository=${{ github.repository }}" \
-            -var "terraform_state_bucket_arn=arn:aws:s3:::${{ vars.TF_STATE_BUCKET }}" \
-            -var "terraform_lock_table_arn=arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_ID}:table/${{ vars.TF_LOCK_TABLE }}"
+      # Applies the exact plan reviewed in CI. If the state moved since the plan
+      # was captured, Terraform rejects the stale plan and the run must be re-done.
+      - name: Terraform apply (saved plan)
+        run: terraform apply -input=false tfplan
 
       - name: Collect outputs
         id: outputs
         run: |
           echo "api_base_url=$(terraform output -raw api_base_url)" >> "$GITHUB_OUTPUT"
-          echo "cluster=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
-          echo "pipeline_task_def=$(terraform output -raw pipeline_task_definition_arn)" >> "$GITHUB_OUTPUT"
-          echo "pipeline_network=$(terraform output -json pipeline_network_configuration | jq -c .)" >> "$GITHUB_OUTPUT"
           echo "### Dev deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
           echo "API: $(terraform output -raw api_base_url)" >> "$GITHUB_STEP_SUMMARY"
 
@@ -183,49 +183,19 @@ jobs:
           curl -fsS "${{ needs.deploy-dev.outputs.api_base_url }}/api/v1/movies/genres" \
             -H "Authorization: Bearer $TOKEN"
 
-  run-pipeline:
-    name: Run data pipeline (dev, one-off task)
-    runs-on: ubuntu-latest
-    needs: [deploy-dev, smoke-dev]
-    if: github.event_name == 'workflow_dispatch' && inputs.run_pipeline
-    steps:
-      - uses: aws-actions/configure-aws-credentials@v4
-        with:
-          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
-          aws-region: ${{ vars.AWS_REGION }}
-
-      - name: Run task and wait
-        run: |
-          NETWORK='${{ needs.deploy-dev.outputs.pipeline_network }}'
-          SUBNETS=$(echo "$NETWORK" | jq -r '.subnets | join(",")')
-          SGS=$(echo "$NETWORK" | jq -r '.security_groups | join(",")')
-
-          TASK_ARN=$(aws ecs run-task \
-            --cluster "${{ needs.deploy-dev.outputs.cluster }}" \
-            --task-definition "${{ needs.deploy-dev.outputs.pipeline_task_def }}" \
-            --launch-type FARGATE \
-            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
-            --query 'tasks[0].taskArn' --output text)
-          echo "Started $TASK_ARN"
-
-          aws ecs wait tasks-stopped --cluster "${{ needs.deploy-dev.outputs.cluster }}" --tasks "$TASK_ARN"
-          EXIT_CODE=$(aws ecs describe-tasks \
-            --cluster "${{ needs.deploy-dev.outputs.cluster }}" --tasks "$TASK_ARN" \
-            --query 'tasks[0].containers[0].exitCode' --output text)
-          echo "Pipeline exited with $EXIT_CODE"
-          [ "$EXIT_CODE" = "0" ]
-
   deploy-prod:
-    name: Deploy prod (approval-gated)
+    name: Deploy prod (apply reviewed plan)
     runs-on: ubuntu-latest
     needs: [build-push, deploy-dev, smoke-dev]
     environment:
-      name: production # required reviewers on this environment gate the deploy
+      name: production # required reviewers on this environment gate the prod apply
     defaults:
       run:
         working-directory: terraform/environments/prod
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.workflow_run.head_sha }}
 
       - uses: aws-actions/configure-aws-credentials@v4
         with:
@@ -238,15 +208,23 @@ jobs:
         working-directory: .
         run: |
           REGISTRY="${{ needs.build-push.outputs.registry }}"
-          for image in api mcp-server pipeline; do
+          for image in api mcp-server; do
             docker pull "$REGISTRY/movie-search-dev/$image:$IMAGE_TAG"
             docker tag  "$REGISTRY/movie-search-dev/$image:$IMAGE_TAG" "$REGISTRY/movie-search-prod/$image:$IMAGE_TAG"
             docker push "$REGISTRY/movie-search-prod/$image:$IMAGE_TAG"
           done
 
+      - name: Download reviewed prod plan (from the CI run)
+        uses: actions/download-artifact@v4
+        with:
+          name: terraform-plan-prod
+          path: terraform/environments/prod
+          run-id: ${{ github.event.workflow_run.id }}
+          github-token: ${{ secrets.GITHUB_TOKEN }}
+
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.15.7"
           terraform_wrapper: false
 
       - name: Terraform init
@@ -258,14 +236,8 @@ jobs:
             -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
             -backend-config="encrypt=true"
 
-      - name: Terraform apply
-        run: |
-          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
-          terraform apply -auto-approve -input=false \
-            -var "image_tag=${IMAGE_TAG}" \
-            -var "github_repository=${{ github.repository }}" \
-            -var "terraform_state_bucket_arn=arn:aws:s3:::${{ vars.TF_STATE_BUCKET }}" \
-            -var "terraform_lock_table_arn=arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_ID}:table/${{ vars.TF_LOCK_TABLE }}"
+      - name: Terraform apply (saved plan)
+        run: terraform apply -input=false tfplan
 
       - name: Summary
         run: |

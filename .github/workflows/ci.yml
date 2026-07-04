@@ -1,14 +1,23 @@
 # CI — runs on every PR and every push to master.
 #
-#   dotnet      build + unit tests for the .NET API solution
-#   python      ruff + pytest for the pipeline and the MCP server (matrix)
-#   docker      the three service images must build (no push)
-#   terraform   fmt + validate over the whole stack
+#   dotnet               build + unit tests for the .NET API solution
+#   python               ruff + pytest for the pipeline and the MCP server (matrix)
+#   docker               the three service images must build (no push)
+#   compose-integration  docker-compose smoke of the backing services
+#   terraform-validate   fmt + validate over the whole stack
+#   terraform-plan       (push to master only) a real, applyable `terraform plan`
+#                        per environment, uploaded as a downloadable artifact and
+#                        rendered to the run summary. CD downloads and applies
+#                        these exact saved plans, so a reviewer can inspect them
+#                        before approving each deploy.
+#
+# The data pipeline is linted, tested and image-built here, but it is NOT
+# deployed to AWS — it runs locally via docker-compose. CD never pushes or
+# deploys the pipeline image.
 
 name: CI
 
 on:
-  workflow_call:
   pull_request:
     branches: [main, master]
   push:
@@ -92,7 +101,8 @@ jobs:
         image:
           - { name: api, context: api/MovieSearch, dockerfile: api/MovieSearch/src/Api/Dockerfile }
           - { name: mcp-server, context: mcp-server, dockerfile: mcp-server/Dockerfile }
-          # Repo-root context: the image bakes in database/migrations.
+          # Pipeline image is built to validate its Dockerfile (used by
+          # docker-compose); it is never pushed or deployed to AWS.
           - { name: pipeline, context: ., dockerfile: pipeline/Dockerfile }
     steps:
       - uses: actions/checkout@v4
@@ -145,7 +155,7 @@ jobs:
         if: always()
         run: docker compose down -v
 
-  terraform:
+  terraform-validate:
     name: Terraform fmt & validate
     runs-on: ubuntu-latest
     defaults:
@@ -156,7 +166,7 @@ jobs:
 
       - uses: hashicorp/setup-terraform@v3
         with:
-          terraform_version: "1.9.8"
+          terraform_version: "1.15.7"
 
       - name: Format check
         run: terraform fmt -check -recursive
@@ -170,19 +180,99 @@ jobs:
             echo "::endgroup::"
           done
 
-      - name: Configure AWS credentials for plan
-        if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_REGION != '' }}
-        uses: aws-actions/configure-aws-credentials@v4
+  terraform-plan:
+    name: Terraform plan (${{ matrix.env }})
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    # Produce a real, applyable plan only for pushes to master, and only when AWS
+    # access is configured. CD downloads and applies these exact artifacts.
+    if: >-
+      github.event_name == 'push'
+      && vars.AWS_DEPLOY_ROLE_ARN != ''
+      && vars.AWS_REGION != ''
+    permissions:
+      id-token: write # OIDC token for AWS
+      contents: read
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          # dev creates the account-wide GitHub OIDC provider; prod references
+          # the one dev already created (deploy-dev runs before deploy-prod).
+          - { env: dev, create_oidc: "true" }
+          - { env: prod, create_oidc: "false" }
+    defaults:
+      run:
+        working-directory: terraform/environments/${{ matrix.env }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
         with:
           role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
           aws-region: ${{ vars.AWS_REGION }}
 
-      - name: Plan (dev/prod)
-        if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_REGION != '' }}
-        run: |
-          terraform -chdir=environments/dev plan -input=false -lock=false -refresh=false -var "image_tag=ci" -var "github_repository=${{ github.repository }}" -var "create_github_oidc_provider=false"
-          terraform -chdir=environments/prod plan -input=false -lock=false -refresh=false -var "image_tag=ci" -var "github_repository=${{ github.repository }}" -var "create_github_oidc_provider=false"
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.15.7"
+          terraform_wrapper: false
 
-      - name: Plan skipped notice
-        if: ${{ vars.AWS_DEPLOY_ROLE_ARN == '' || vars.AWS_REGION == '' }}
-        run: echo "Skipping terraform plan because AWS_DEPLOY_ROLE_ARN/AWS_REGION repository variables are not configured."
+      - name: Terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=movie-search/${{ matrix.env }}/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      # The plan is generated with the SAME variables CD applies with, so the
+      # saved plan CD consumes is exactly what was reviewed here. image_tag is
+      # the commit SHA — CD builds/pushes those images before applying.
+      - name: Terraform plan
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform plan -input=false -lock-timeout=120s -out=tfplan \
+            -var "image_tag=${{ github.sha }}" \
+            -var "github_repository=${{ github.repository }}" \
+            -var "create_github_oidc_provider=${{ matrix.create_oidc }}" \
+            -var "terraform_state_bucket_arn=arn:aws:s3:::${{ vars.TF_STATE_BUCKET }}" \
+            -var "terraform_lock_table_arn=arn:aws:dynamodb:${{ vars.AWS_REGION }}:${ACCOUNT_ID}:table/${{ vars.TF_LOCK_TABLE }}"
+          terraform show -no-color tfplan > plan.txt
+
+      - name: Render plan to job summary
+        run: |
+          {
+            echo "### Terraform plan — ${{ matrix.env }} (commit ${GITHUB_SHA::7})"
+            echo ""
+            echo '```'
+            # Cap to stay under the summary size limit; the full plan is in the artifact.
+            head -c 900000 plan.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      # Sensitive values are redacted in plan.txt, but the binary tfplan can
+      # embed them — keep retention short; artifacts are repo-members only.
+      - name: Upload plan artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: terraform-plan-${{ matrix.env }}
+          path: |
+            terraform/environments/${{ matrix.env }}/tfplan
+            terraform/environments/${{ matrix.env }}/plan.txt
+          retention-days: 5
+          if-no-files-found: error
+
+  terraform-plan-skipped:
+    name: Terraform plan (skipped)
+    runs-on: ubuntu-latest
+    needs: terraform-validate
+    if: >-
+      github.event_name != 'push'
+      || vars.AWS_DEPLOY_ROLE_ARN == ''
+      || vars.AWS_REGION == ''
+    steps:
+      - run: |
+          echo "Applyable terraform plans are produced only on push to master with"
+          echo "AWS_DEPLOY_ROLE_ARN / AWS_REGION repository variables configured."
+          echo "CD (which applies these plans) will not have artifacts to consume otherwise."
