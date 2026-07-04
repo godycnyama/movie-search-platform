@@ -8,9 +8,11 @@
 name: CI
 
 on:
+  workflow_call:
   pull_request:
+    branches: [main, master]
   push:
-    branches: [master]
+    branches: [main, master]
 
 concurrency:
   group: ci-${{ github.ref }}
@@ -21,6 +23,7 @@ permissions:
 
 env:
   DOTNET_VERSION: 10.0.x
+  PYTHON_VERSION: "3.13"
 
 jobs:
   dotnet:
@@ -32,6 +35,9 @@ jobs:
       - uses: actions/setup-dotnet@v4
         with:
           dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Format check
+        run: dotnet format api/MovieSearch/MovieSearch.slnx --verify-no-changes --verbosity minimal
 
       - name: Restore
         run: dotnet restore api/MovieSearch
@@ -68,6 +74,12 @@ jobs:
       - name: Ruff
         run: uv run --no-sync ruff check .
 
+      - name: Mypy
+        run: >-
+          uvx --python ${{ env.PYTHON_VERSION }} mypy
+          --ignore-missing-imports
+          src
+
       - name: Pytest
         run: uv run --no-sync pytest -q
 
@@ -96,6 +108,43 @@ jobs:
           cache-from: type=gha,scope=${{ matrix.image.name }}
           cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
 
+  compose-integration:
+    name: Docker Compose integration smoke
+    runs-on: ubuntu-latest
+    needs: docker
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Create CI .env
+        run: |
+          cat <<'EOF' > .env
+          POSTGRES_USER=movies
+          POSTGRES_PASSWORD=movies_pw
+          POSTGRES_DB=movies
+          REDIS_PASSWORD=redis_pw
+          JWT_SIGNING_KEY=ci-signing-key-ci-signing-key-ci-signing-key
+          GRAFANA_ADMIN_PASSWORD=admin
+          EOF
+
+      - name: Start integration subset
+        run: docker compose up --build -d --wait postgres redis prometheus grafana jaeger
+
+      - name: Integration assertions
+        run: |
+          docker compose ps
+          docker compose exec -T postgres pg_isready -U movies -d movies
+          curl -fsS http://localhost:9090/-/healthy
+          curl -fsS http://localhost:3000/api/health
+          curl -fsS http://localhost:16686/
+
+      - name: Collect service logs on failure
+        if: failure()
+        run: docker compose logs --no-color --tail=200
+
+      - name: Tear down stack
+        if: always()
+        run: docker compose down -v
+
   terraform:
     name: Terraform fmt & validate
     runs-on: ubuntu-latest
@@ -120,3 +169,20 @@ jobs:
             terraform -chdir="$dir" validate
             echo "::endgroup::"
           done
+
+      - name: Configure AWS credentials for plan
+        if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_REGION != '' }}
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Plan (dev/prod)
+        if: ${{ vars.AWS_DEPLOY_ROLE_ARN != '' && vars.AWS_REGION != '' }}
+        run: |
+          terraform -chdir=environments/dev plan -input=false -lock=false -refresh=false -var "image_tag=ci" -var "github_repository=${{ github.repository }}" -var "create_github_oidc_provider=false"
+          terraform -chdir=environments/prod plan -input=false -lock=false -refresh=false -var "image_tag=ci" -var "github_repository=${{ github.repository }}" -var "create_github_oidc_provider=false"
+
+      - name: Plan skipped notice
+        if: ${{ vars.AWS_DEPLOY_ROLE_ARN == '' || vars.AWS_REGION == '' }}
+        run: echo "Skipping terraform plan because AWS_DEPLOY_ROLE_ARN/AWS_REGION repository variables are not configured."

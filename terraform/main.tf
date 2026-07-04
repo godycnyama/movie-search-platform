@@ -142,6 +142,7 @@ module "monitoring" {
   alarm_email          = var.alarm_email
   cluster_name         = module.ecs.cluster_name
   service_names        = [module.ecs.api_service_name, module.ecs.mcp_service_name]
+  xray_service_names   = ["movie-search-api", "mcp-server"]
   alb_arn_suffix       = module.alb.arn_suffix
   target_group_suffix  = module.alb.target_group_arn_suffix
   db_instance_identity = module.rds.identifier

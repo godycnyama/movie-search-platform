@@ -64,7 +64,7 @@ locals {
 # --- Logs -----------------------------------------------------------------------
 
 resource "aws_cloudwatch_log_group" "service" {
-  for_each = toset(["api", "mcp-server", "ollama", "pipeline"])
+  for_each = toset(["api", "mcp-server", "ollama", "pipeline", "xray"])
 
   name              = "/ecs/${var.name_prefix}/${each.key}"
   retention_in_days = var.log_retention_days
@@ -150,6 +150,25 @@ resource "aws_iam_role_policy" "ecs_exec" {
   name   = "ecs-exec"
   role   = aws_iam_role.task.id
   policy = data.aws_iam_policy_document.ecs_exec.json
+}
+
+data "aws_iam_policy_document" "xray_write" {
+  statement {
+    actions = [
+      "xray:PutTraceSegments",
+      "xray:PutTelemetryRecords",
+      "xray:GetSamplingRules",
+      "xray:GetSamplingTargets",
+      "xray:GetSamplingStatisticSummaries",
+    ]
+    resources = ["*"]
+  }
+}
+
+resource "aws_iam_role_policy" "xray_write" {
+  name   = "xray-write"
+  role   = aws_iam_role.task.id
+  policy = data.aws_iam_policy_document.xray_write.json
 }
 
 # --- EFS: Ollama model cache -------------------------------------------------------

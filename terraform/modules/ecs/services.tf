@@ -126,3 +126,23 @@ resource "aws_appautoscaling_policy" "service_cpu" {
     }
   }
 }
+
+resource "aws_appautoscaling_policy" "service_memory" {
+  for_each = aws_appautoscaling_target.service
+
+  name               = "${each.value.resource_id}-memory"
+  policy_type        = "TargetTrackingScaling"
+  service_namespace  = each.value.service_namespace
+  resource_id        = each.value.resource_id
+  scalable_dimension = each.value.scalable_dimension
+
+  target_tracking_scaling_policy_configuration {
+    target_value       = 70
+    scale_in_cooldown  = 300
+    scale_out_cooldown = 60
+
+    predefined_metric_specification {
+      predefined_metric_type = "ECSServiceAverageMemoryUtilization"
+    }
+  }
+}

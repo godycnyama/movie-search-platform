@@ -17,6 +17,12 @@ variable "service_names" {
   type        = list(string)
 }
 
+variable "xray_service_names" {
+  description = "OpenTelemetry/X-Ray service names expected in trace documents."
+  type        = list(string)
+  default     = []
+}
+
 variable "alb_arn_suffix" {
   type = string
 }

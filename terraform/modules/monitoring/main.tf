@@ -142,3 +142,26 @@ resource "aws_cloudwatch_metric_alarm" "rds_storage" {
   alarm_actions = [aws_sns_topic.alarms.arn]
   ok_actions    = [aws_sns_topic.alarms.arn]
 }
+
+# --- X-Ray ---------------------------------------------------------------------------
+
+resource "aws_xray_sampling_rule" "default" {
+  rule_name      = "${var.name_prefix}-default"
+  priority       = 10000
+  version        = 1
+  reservoir_size = 1
+  fixed_rate     = 0.05
+  host           = "*"
+  http_method    = "*"
+  url_path       = "*"
+  service_name   = "*"
+  service_type   = "*"
+  resource_arn   = "*"
+}
+
+resource "aws_xray_group" "services" {
+  for_each = toset(var.xray_service_names)
+
+  group_name        = "${var.name_prefix}-${each.key}"
+  filter_expression = "service(\"name\") = \"${each.key}\""
+}

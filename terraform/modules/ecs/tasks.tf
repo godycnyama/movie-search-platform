@@ -38,11 +38,17 @@ resource "aws_ecs_task_definition" "api" {
       environment = [
         { name = "ASPNETCORE_ENVIRONMENT", value = "Production" },
         { name = "ASPNETCORE_URLS", value = "http://+:8080" },
+        { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "http://127.0.0.1:4317" },
+        { name = "OTEL_SERVICE_NAME", value = "movie-search-api" },
         # Movie data source: the MCP server, resolved through Cloud Map.
         { name = "McpSettings__ServerUrl", value = "http://${local.mcp_host}:8000" },
         { name = "McpSettings__Transport", value = var.mcp_transport },
         { name = "JwtSettings__Issuer", value = var.jwt_issuer },
         { name = "JwtSettings__Audience", value = var.jwt_audience },
+      ]
+
+      dependsOn = [
+        { containerName = "aws-otel-collector", condition = "START" }
       ]
 
       secrets = [
@@ -60,6 +66,23 @@ resource "aws_ecs_task_definition" "api" {
       }
 
       logConfiguration = local.log_configuration["api"]
+    },
+    {
+      name      = "aws-otel-collector"
+      image     = "public.ecr.aws/aws-observability/aws-otel-collector:v0.40.0"
+      essential = false
+
+      command = ["--config=/etc/ecs/ecs-default-config.yaml"]
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -q --spider http://localhost:13133/ || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 20
+      }
+
+      logConfiguration = local.log_configuration["xray"]
     }
   ])
 }
@@ -87,10 +110,16 @@ resource "aws_ecs_task_definition" "mcp" {
         { name = "MCP_HOST", value = "0.0.0.0" },
         { name = "MCP_PORT", value = "8000" },
         { name = "MCP_TRANSPORT", value = var.mcp_transport },
+        { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "http://127.0.0.1:4317" },
+        { name = "OTEL_SERVICE_NAME", value = "mcp-server" },
         { name = "OLLAMA_URL", value = local.ollama_url },
         { name = "EMBEDDING_MODEL", value = var.embedding_model },
         { name = "EMBEDDING_DIM", value = tostring(var.embedding_dim) },
         { name = "LOG_LEVEL", value = var.log_level },
+      ]
+
+      dependsOn = [
+        { containerName = "aws-otel-collector", condition = "START" }
       ]
 
       secrets = [
@@ -106,6 +135,23 @@ resource "aws_ecs_task_definition" "mcp" {
       }
 
       logConfiguration = local.log_configuration["mcp-server"]
+    },
+    {
+      name      = "aws-otel-collector"
+      image     = "public.ecr.aws/aws-observability/aws-otel-collector:v0.40.0"
+      essential = false
+
+      command = ["--config=/etc/ecs/ecs-default-config.yaml"]
+
+      healthCheck = {
+        command     = ["CMD-SHELL", "wget -q --spider http://localhost:13133/ || exit 1"]
+        interval    = 30
+        timeout     = 5
+        retries     = 3
+        startPeriod = 20
+      }
+
+      logConfiguration = local.log_configuration["xray"]
     }
   ])
 }
