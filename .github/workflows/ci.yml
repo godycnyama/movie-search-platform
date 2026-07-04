@@ -1,0 +1,122 @@
+# CI — runs on every PR and every push to master.
+#
+#   dotnet      build + unit tests for the .NET API solution
+#   python      ruff + pytest for the pipeline and the MCP server (matrix)
+#   docker      the three service images must build (no push)
+#   terraform   fmt + validate over the whole stack
+
+name: CI
+
+on:
+  pull_request:
+  push:
+    branches: [master]
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+env:
+  DOTNET_VERSION: 10.0.x
+
+jobs:
+  dotnet:
+    name: .NET build & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: ${{ env.DOTNET_VERSION }}
+
+      - name: Restore
+        run: dotnet restore api/MovieSearch
+
+      - name: Build
+        run: dotnet build api/MovieSearch --no-restore --configuration Release
+
+      - name: Test
+        run: >-
+          dotnet test api/MovieSearch --no-build --configuration Release
+          --logger "console;verbosity=normal"
+
+  python:
+    name: Python lint & test (${{ matrix.project }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        project: [pipeline, mcp-server]
+    defaults:
+      run:
+        working-directory: ${{ matrix.project }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: astral-sh/setup-uv@v5
+        with:
+          enable-cache: true
+          cache-dependency-glob: ${{ matrix.project }}/uv.lock
+
+      - name: Sync dependencies
+        run: uv sync --frozen
+
+      - name: Ruff
+        run: uv run --no-sync ruff check .
+
+      - name: Pytest
+        run: uv run --no-sync pytest -q
+
+  docker:
+    name: Docker build (${{ matrix.image.name }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        image:
+          - { name: api, context: api/MovieSearch, dockerfile: api/MovieSearch/src/Api/Dockerfile }
+          - { name: mcp-server, context: mcp-server, dockerfile: mcp-server/Dockerfile }
+          # Repo-root context: the image bakes in database/migrations.
+          - { name: pipeline, context: ., dockerfile: pipeline/Dockerfile }
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build ${{ matrix.image.name }}
+        uses: docker/build-push-action@v6
+        with:
+          context: ${{ matrix.image.context }}
+          file: ${{ matrix.image.dockerfile }}
+          push: false
+          cache-from: type=gha,scope=${{ matrix.image.name }}
+          cache-to: type=gha,scope=${{ matrix.image.name }},mode=max
+
+  terraform:
+    name: Terraform fmt & validate
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: terraform
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+
+      - name: Format check
+        run: terraform fmt -check -recursive
+
+      - name: Validate (dev, prod, bootstrap)
+        run: |
+          for dir in environments/dev environments/prod bootstrap; do
+            echo "::group::$dir"
+            terraform -chdir="$dir" init -backend=false -input=false > /dev/null
+            terraform -chdir="$dir" validate
+            echo "::endgroup::"
+          done

@@ -1,0 +1,241 @@
+# CD — build once, deploy dev automatically, promote to prod behind a manual
+# approval (the `production` GitHub environment's required reviewers).
+#
+# AWS access is via OIDC only (aws-actions/configure-aws-credentials assumes
+# the Terraform-created deploy role) — no long-lived keys anywhere.
+#
+# Required repository VARIABLES (Settings -> Secrets and variables -> Actions):
+#   AWS_REGION           e.g. eu-west-1
+#   AWS_DEPLOY_ROLE_ARN  terraform output github_deploy_role_arn (dev stack)
+#   TF_STATE_BUCKET      terraform/bootstrap output state_bucket_name
+#   TF_LOCK_TABLE        terraform/bootstrap output lock_table_name
+#
+# Required GitHub ENVIRONMENTS: `dev`, and `production` with required reviewers
+# (that reviewer approval is the prod gate).
+#
+# FIRST-TIME SETUP: apply each environment once from a workstation
+# (terraform/README.md) so the ECR repositories and the deploy role exist
+# before this workflow first runs.
+
+name: CD
+
+on:
+  push:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      run_pipeline:
+        description: "Run the data pipeline task in dev after deploying"
+        type: boolean
+        default: false
+
+concurrency:
+  group: cd-master
+  cancel-in-progress: false # never cancel a deployment mid-apply
+
+permissions:
+  id-token: write # OIDC token for AWS
+  contents: read
+
+env:
+  AWS_REGION: ${{ vars.AWS_REGION }}
+  IMAGE_TAG: ${{ github.sha }}
+
+jobs:
+  build-push:
+    name: Build & push images (dev ECR)
+    runs-on: ubuntu-latest
+    outputs:
+      registry: ${{ steps.ecr.outputs.registry }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - id: ecr
+        uses: aws-actions/amazon-ecr-login@v2
+
+      - uses: docker/setup-buildx-action@v3
+
+      - name: Build & push api
+        uses: docker/build-push-action@v6
+        with:
+          context: api/MovieSearch
+          file: api/MovieSearch/src/Api/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/api:${{ env.IMAGE_TAG }}
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/api:latest
+          cache-from: type=gha,scope=api
+          cache-to: type=gha,scope=api,mode=max
+
+      - name: Build & push mcp-server
+        uses: docker/build-push-action@v6
+        with:
+          context: mcp-server
+          file: mcp-server/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/mcp-server:${{ env.IMAGE_TAG }}
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/mcp-server:latest
+          cache-from: type=gha,scope=mcp-server
+          cache-to: type=gha,scope=mcp-server,mode=max
+
+      - name: Build & push pipeline
+        uses: docker/build-push-action@v6
+        with:
+          # Repo-root context: the image bakes in database/migrations.
+          context: .
+          file: pipeline/Dockerfile
+          push: true
+          tags: |
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/pipeline:${{ env.IMAGE_TAG }}
+            ${{ steps.ecr.outputs.registry }}/movie-search-dev/pipeline:latest
+          cache-from: type=gha,scope=pipeline
+          cache-to: type=gha,scope=pipeline,mode=max
+
+  deploy-dev:
+    name: Deploy dev (terraform apply)
+    runs-on: ubuntu-latest
+    needs: build-push
+    environment: dev
+    outputs:
+      api_base_url: ${{ steps.outputs.outputs.api_base_url }}
+      cluster: ${{ steps.outputs.outputs.cluster }}
+      pipeline_task_def: ${{ steps.outputs.outputs.pipeline_task_def }}
+      pipeline_network: ${{ steps.outputs.outputs.pipeline_network }}
+    defaults:
+      run:
+        working-directory: terraform/environments/dev
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=movie-search/dev/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform apply
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform apply -auto-approve -input=false \
+            -var "image_tag=${IMAGE_TAG}" \
+            -var "github_repository=${{ github.repository }}" \
+            -var "terraform_state_bucket_arn=arn:aws:s3:::${{ vars.TF_STATE_BUCKET }}" \
+            -var "terraform_lock_table_arn=arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_ID}:table/${{ vars.TF_LOCK_TABLE }}"
+
+      - name: Collect outputs
+        id: outputs
+        run: |
+          echo "api_base_url=$(terraform output -raw api_base_url)" >> "$GITHUB_OUTPUT"
+          echo "cluster=$(terraform output -raw ecs_cluster_name)" >> "$GITHUB_OUTPUT"
+          echo "pipeline_task_def=$(terraform output -raw pipeline_task_definition_arn)" >> "$GITHUB_OUTPUT"
+          echo "pipeline_network=$(terraform output -json pipeline_network_configuration | jq -c .)" >> "$GITHUB_OUTPUT"
+          echo "### Dev deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "API: $(terraform output -raw api_base_url)" >> "$GITHUB_STEP_SUMMARY"
+
+  run-pipeline:
+    name: Run data pipeline (dev, one-off task)
+    runs-on: ubuntu-latest
+    needs: deploy-dev
+    if: github.event_name == 'workflow_dispatch' && inputs.run_pipeline
+    steps:
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - name: Run task and wait
+        run: |
+          NETWORK='${{ needs.deploy-dev.outputs.pipeline_network }}'
+          SUBNETS=$(echo "$NETWORK" | jq -r '.subnets | join(",")')
+          SGS=$(echo "$NETWORK" | jq -r '.security_groups | join(",")')
+
+          TASK_ARN=$(aws ecs run-task \
+            --cluster "${{ needs.deploy-dev.outputs.cluster }}" \
+            --task-definition "${{ needs.deploy-dev.outputs.pipeline_task_def }}" \
+            --launch-type FARGATE \
+            --network-configuration "awsvpcConfiguration={subnets=[$SUBNETS],securityGroups=[$SGS],assignPublicIp=DISABLED}" \
+            --query 'tasks[0].taskArn' --output text)
+          echo "Started $TASK_ARN"
+
+          aws ecs wait tasks-stopped --cluster "${{ needs.deploy-dev.outputs.cluster }}" --tasks "$TASK_ARN"
+          EXIT_CODE=$(aws ecs describe-tasks \
+            --cluster "${{ needs.deploy-dev.outputs.cluster }}" --tasks "$TASK_ARN" \
+            --query 'tasks[0].containers[0].exitCode' --output text)
+          echo "Pipeline exited with $EXIT_CODE"
+          [ "$EXIT_CODE" = "0" ]
+
+  deploy-prod:
+    name: Deploy prod (approval-gated)
+    runs-on: ubuntu-latest
+    needs: [build-push, deploy-dev]
+    environment:
+      name: production # required reviewers on this environment gate the deploy
+    defaults:
+      run:
+        working-directory: terraform/environments/prod
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_DEPLOY_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+
+      - uses: aws-actions/amazon-ecr-login@v2
+
+      - name: Promote images dev -> prod repositories
+        working-directory: .
+        run: |
+          REGISTRY="${{ needs.build-push.outputs.registry }}"
+          for image in api mcp-server pipeline; do
+            docker pull "$REGISTRY/movie-search-dev/$image:$IMAGE_TAG"
+            docker tag  "$REGISTRY/movie-search-dev/$image:$IMAGE_TAG" "$REGISTRY/movie-search-prod/$image:$IMAGE_TAG"
+            docker push "$REGISTRY/movie-search-prod/$image:$IMAGE_TAG"
+          done
+
+      - uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: "1.9.8"
+          terraform_wrapper: false
+
+      - name: Terraform init
+        run: |
+          terraform init -input=false \
+            -backend-config="bucket=${{ vars.TF_STATE_BUCKET }}" \
+            -backend-config="key=movie-search/prod/terraform.tfstate" \
+            -backend-config="region=${{ vars.AWS_REGION }}" \
+            -backend-config="dynamodb_table=${{ vars.TF_LOCK_TABLE }}" \
+            -backend-config="encrypt=true"
+
+      - name: Terraform apply
+        run: |
+          ACCOUNT_ID=$(aws sts get-caller-identity --query Account --output text)
+          terraform apply -auto-approve -input=false \
+            -var "image_tag=${IMAGE_TAG}" \
+            -var "github_repository=${{ github.repository }}" \
+            -var "terraform_state_bucket_arn=arn:aws:s3:::${{ vars.TF_STATE_BUCKET }}" \
+            -var "terraform_lock_table_arn=arn:aws:dynamodb:${AWS_REGION}:${ACCOUNT_ID}:table/${{ vars.TF_LOCK_TABLE }}"
+
+      - name: Summary
+        run: |
+          echo "### Prod deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "API: $(terraform output -raw api_base_url)" >> "$GITHUB_STEP_SUMMARY"
