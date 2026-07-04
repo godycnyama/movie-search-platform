@@ -64,7 +64,7 @@ def main() -> None:
             embeddings = client.embed(batch["augmented_text"].tolist())
             movies = [
                 _to_movie(row, embedding, settings.pipeline_version)
-                for (_, row), embedding in zip(batch.iterrows(), embeddings)
+                for (_, row), embedding in zip(batch.iterrows(), embeddings, strict=True)
             ]
             written += upsert_movies(engine, movies)
             logger.info("Upserted %d/%d movies", written, len(df))

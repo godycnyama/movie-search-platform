@@ -41,7 +41,7 @@ class PipelineSettings(BaseSettings):
     embedding_dim: int = Field(
         default=EMBEDDING_DIM,
         ge=1,
-        description="Expected embedding dimensionality; must match the pgvector vector(768) column.",
+        description="Expected embedding dimensionality; must match vector(768).",
     )
 
     batch_size: int = Field(
