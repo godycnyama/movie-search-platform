@@ -10,6 +10,8 @@ environment / ``.env`` — the committed default is credential-free and only
 works against a local trust-auth database.
 """
 
+from typing import Literal
+
 from pydantic import Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -28,9 +30,22 @@ class PipelineSettings(BaseSettings):
         description="PostgreSQL DSN; credentials come from the environment, never committed.",
     )
 
+    # --- Embeddings: swappable backend (see pipeline/embedding.py) -----------
+    # ENV selects the embedding backend: `local` uses the Ollama container,
+    # `dev`/`prod` use Amazon Bedrock. The MCP server MUST use the same
+    # backend/model so query and document vectors share one space.
+    env: Literal["local", "dev", "prod"] = Field(
+        default="local",
+        description="Deployment environment; drives the default embedding backend.",
+    )
+    embedding_provider: Literal["auto", "ollama", "bedrock"] = Field(
+        default="auto",
+        description="Explicit backend override; 'auto' derives it from env.",
+    )
+
     ollama_url: str = Field(
         default="http://localhost:11434",
-        description="Base URL of the Ollama server that serves the embedding model.",
+        description="Base URL of the Ollama server serving the embedding model (local backend).",
     )
 
     embedding_model: str = Field(
@@ -38,10 +53,20 @@ class PipelineSettings(BaseSettings):
         description="Ollama model used for embeddings; must produce embedding_dim-sized vectors.",
     )
 
+    bedrock_region: str = Field(
+        default="us-east-1",
+        description="AWS region for the Bedrock runtime (dev/prod backend).",
+    )
+
+    bedrock_embedding_model_id: str = Field(
+        default="amazon.titan-embed-text-v2:0",
+        description="Bedrock embedding model id; the MCP server must use the same id.",
+    )
+
     embedding_dim: int = Field(
         default=EMBEDDING_DIM,
         ge=1,
-        description="Expected embedding dimensionality; must match vector(768).",
+        description="Expected embedding dimensionality; must match the pgvector vector(N) column.",
     )
 
     batch_size: int = Field(

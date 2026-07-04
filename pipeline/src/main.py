@@ -18,7 +18,7 @@ from vega_datasets import data
 from models import Movie
 from pipeline.augmentation import augment
 from pipeline.cleaning import clean
-from pipeline.embedding import OllamaEmbeddingsClient
+from pipeline.embedding import create_embeddings_provider
 from pipeline.imputation import impute
 from pipeline.loader import create_db_engine, movie_id, upsert_movies
 from pipeline.settings import PipelineSettings
@@ -54,8 +54,7 @@ def main() -> None:
     # Embed + load in batches. (Schema is applied beforehand by
     # `alembic upgrade head` — see the pipeline Dockerfile CMD.)
     engine = create_db_engine(settings.database_url)
-    client = OllamaEmbeddingsClient(
-        settings.ollama_url, settings.embedding_model, settings.embedding_dim)
+    client = create_embeddings_provider(settings)
 
     written = 0
     try:

@@ -7,12 +7,16 @@ thresholds and identities that must stay consistent across runs (and, where
 noted, with the .NET API).
 """
 
+import os
 import uuid
 
 # --- Shared schema ----------------------------------------------------------
 
-EMBEDDING_DIM = 768
-"""Must match the pgvector ``vector(768)`` column and the embedding model."""
+EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
+"""Embedding dimensionality — must match the pgvector ``vector(N)`` column and the
+active embedding model. Env-driven because the model varies per environment
+(local nomic-embed-text = 768; AWS Bedrock Titan Text Embeddings V2 = 1024). The
+Alembic migration reads the same ``EMBEDDING_DIM`` so the column is sized to match."""
 
 
 class UserRoles:
