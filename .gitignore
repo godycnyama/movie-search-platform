@@ -33,3 +33,9 @@ crash.log
 .DS_Store
 .idea/
 .vscode/
+
+# Terraform (state + local backend config)
+*.tfstate
+*.tfstate.*
+backend.hcl
+.terraform.lock.hcl

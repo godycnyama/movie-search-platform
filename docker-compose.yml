@@ -156,7 +156,10 @@ services:
   # ---------------------------------------------------------------------------
   pipeline:
     build:
-      context: ./pipeline          # requires pipeline/Dockerfile
+      # Repo-root context so database/migrations can be baked into the image
+      # (the same image runs on ECS Fargate, where nothing can be mounted).
+      context: .
+      dockerfile: pipeline/Dockerfile
     container_name: msp-pipeline
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}

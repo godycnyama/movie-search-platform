@@ -12,10 +12,10 @@ to **AWS via Terraform**.
 > FastMCP server ([mcp-server/](mcp-server/)), the .NET 10 API
 > ([api/](api/) — endpoints served through the MCP server, JWT auth, Redis caching, OpenTelemetry),
 > and the monitoring configs ([monitoring/](monitoring/)).
-> 🚧 **Outstanding:** [terraform/](terraform/) and
-> [.github/workflows/](.github/workflows/) are empty. Sections below marked ⚠️ describe intended
-> design that has not landed yet. This README follows the structure required by the technical
-> assessment brief.
+> ✅ Also done: **Terraform** (AWS ECS Fargate — [terraform/](terraform/)), **CI/CD**
+> ([.github/workflows/](.github/workflows/)), **pytest suites** for the pipeline and MCP server,
+> the **k6 load test** ([scripts/load_test.js](scripts/load_test.js)), and Prometheus metrics on
+> both services. This README follows the structure required by the technical assessment brief.
 
 ---
 
@@ -70,8 +70,8 @@ to **AWS via Terraform**.
 
   Cache:         Redis 7 (:6379) — API query-result cache (LRU, password-protected)
   Observability: OpenTelemetry → Jaeger (:16686) · Prometheus (:9090) · Grafana (:3000)
-  Deployment:    Terraform (terraform/) → AWS   ⚠️ not started
-  Bonus:         Embedding Atlas (:7000, compose profile "bonus")   ⚠️ not started
+  Deployment:    Terraform (terraform/) → AWS ECS Fargate   ✅ see §12
+  Bonus:         Embedding Atlas (:7000, compose profile "bonus")
 ```
 
 Note: the API serves **all movie reads through the MCP server** (official `ModelContextProtocol`
@@ -98,13 +98,13 @@ movie-search-platform/
 ├── mcp-server/               # Part 3 — FastMCP server (Python + uv)         ✅ implemented
 │   ├── src/server/           #   tools · db · embeddings · asgi · logging
 │   └── Dockerfile
-├── api/MovieSearch/          # Part 4 — .NET 10 Web API                      ✅ implemented*
+├── api/MovieSearch/          # Part 4 — .NET 10 Web API (MCP client)         ✅ implemented
 │   ├── src/{Domain,Application,Infrastructure,Api}/   # layered solution (.slnx)
-│   └── src/Api/Dockerfile    #   *embedding client is a stub — see §14
+│   └── src/Api/Dockerfile
 ├── monitoring/               # prometheus.yml · Grafana provisioning + dashboard  ✅ committed
-├── scripts/                  # Atlas export + load tests                     ⚠️ empty
-├── terraform/                # Part 6 — AWS IaC                              ⚠️ empty
-└── .github/workflows/        # ci.yml, cd.yml                                ⚠️ empty
+├── scripts/                  # Atlas export + k6 load test                   ✅ implemented
+├── terraform/                # Part 6 — AWS ECS Fargate IaC (see §12)        ✅ implemented
+└── .github/workflows/        # ci.yml, cd.yml (see §12-13)                   ✅ implemented
 ```
 
 ---
@@ -121,8 +121,9 @@ Exact versions the platform targets:
 | [uv](https://github.com/astral-sh/uv) | **≥ 0.5** | Python package & venv manager for both Python services (`uv.lock` committed) |
 | .NET SDK | **10.0** | Only needed to build/run [api/](api/) outside Docker |
 | PostgreSQL | **16.x** + `pgvector` **≥ 0.7** | Provided by the `pgvector/pgvector:pg16` image |
-| Terraform | **≥ 1.7** | For AWS deployment (⚠️ IaC not yet written) |
+| Terraform | **≥ 1.9** | For AWS deployment ([terraform/](terraform/), §12) |
 | AWS CLI | **v2** | Authenticated to the target account (SSO or named profile) |
+| k6 | latest | Only for the load test ([scripts/load_test.js](scripts/load_test.js), §13) |
 
 > All tools should be installed from official sources, and new project dependencies should go through
 > the organisation's approved dependency-vetting process before use.
@@ -158,14 +159,6 @@ pipeline and MCP server come up (cold start ~1–2 min depending on bandwidth).
 > password) are read from the git-ignored `.env` file — never hardcoded in code or committed config.
 > The compose file uses `${VAR:?…}` so it fails fast if a required secret is missing. If this
 > platform is exposed to a wider internal audience, contact the AI Engineering team before deploying.
-
-> ⚠️ **Known build caveats:**
-> - The `api` service builds with `context: ./api`, but the Dockerfile lives at
->   [api/MovieSearch/src/Api/Dockerfile](api/MovieSearch/src/Api/Dockerfile) — the compose build
->   context/dockerfile paths need aligning before `docker compose build api` succeeds.
-> - The bonus `atlas` service expects a `scripts/Dockerfile` that does not exist yet
->   ([scripts/](scripts/) is empty). It is behind the `bonus` profile, so the default
->   `docker compose up` is unaffected.
 
 ---
 
@@ -539,69 +532,79 @@ Health checks: the API's `/health` reports overall + per-dependency status (Post
 DbContext check, the MCP server via an MCP ping over the shared session) and backs the compose
 healthcheck; the MCP server exposes its own `/health`.
 
-> ⚠️ Rate limiting (60 req/min per user) and the p95 < 500ms load-test validation described in the
-> brief are not implemented yet — Redis response caching in the search/stats handlers is.
+Rate limiting (60 req/min per authenticated user, fixed window on the JWT `sub` claim) is enforced
+by the API's rate limiter middleware; the p95 < 500ms SLO is validated by the k6 load test
+([scripts/load_test.js](scripts/load_test.js), §13). Both Python services expose Prometheus
+metrics: the API via the OTel exporter, the MCP server via `/metrics` (per-tool call counts and
+durations).
 
 ---
 
 ## 12. Terraform Deployment
 
-**Location:** [terraform/](terraform/). ⚠️ **PLACEHOLDER — the directory is empty; no IaC has been
-written yet.** Intended target: **AWS ECS Fargate** behind an **ALB (HTTPS/ACM)**, backed by
-**RDS PostgreSQL (pgvector)** in private subnets, images in **ECR**, secrets in **Secrets Manager**,
-logs/traces in **CloudWatch/X-Ray**.
+**Location:** [terraform/](terraform/) — ✅ **implemented** (see the detailed
+[terraform/README.md](terraform/README.md)). Target: **AWS ECS Fargate** — the **.NET API** and
+**MCP server** each autoscale between **1 and 2 tasks** (CPU target tracking), with an internal
+**Ollama** service (EFS model cache) for query embeddings and the **pipeline** as a one-off ECS
+task. Backed by **RDS PostgreSQL 16 (pgvector)** and **ElastiCache Redis** in private subnets,
+images in **ECR** (scan-on-push), a public **ALB** (HTTP now; supply `acm_certificate_arn` to turn
+on HTTPS + redirect), and CloudWatch alarms → SNS.
 
 ```
-terraform/                                   # intended layout
-├── modules/{networking,compute,rds,ecr,alb,iam,monitoring,secrets}/
-├── environments/{dev,prod}/
-├── main.tf · variables.tf · outputs.tf · README.md
+terraform/
+├── main.tf · variables.tf · outputs.tf · versions.tf    # platform composition module
+├── modules/{networking,ecr,secrets,rds,elasticache,alb,ecs,iam,monitoring}/
+├── environments/{dev,prod}/                             # dev: single-AZ; prod: Multi-AZ + protection
+└── bootstrap/                                           # one-time S3 state bucket + DynamoDB locks
 ```
 
-Infrastructure guarantees (intended): all secrets via Secrets Manager (no hardcoded credentials);
-compute tasks use IAM roles (no access keys); RDS in private subnets only; ALB with HTTPS;
-CPU/memory auto-scaling; VPC Flow Logs enabled; **remote state in S3 with DynamoDB locking**; every
-resource tagged `Environment`, `Project`, `ManagedBy`.
+Infrastructure guarantees: all secrets **generated in-stack** and stored in Secrets Manager
+(injected into tasks via `valueFrom` — no credentials in tfvars, source, or plain env vars);
+compute uses IAM roles (GitHub deploys via **OIDC**, no access keys); RDS/Redis in private subnets
+only; CPU-based auto-scaling; **VPC Flow Logs** enabled; **remote state in S3 with DynamoDB
+locking** (`terraform/bootstrap`); every resource tagged `Environment`, `Project`, `ManagedBy` via
+provider `default_tags`.
 
-- Never commit real `*.tfvars` with secrets — pass Secrets Manager ARNs instead.
+- Never commit real `*.tfvars` or `backend.hcl` (both git-ignored; `.example` templates provided).
 - Deployment targets the organisation's own AWS account only — do not use public/consumer hosting.
-  Coordinate with the AI Engineering team before exposing the platform internally.
+  Coordinate with the AI Engineering team before exposing the platform internally, and have
+  Security review the deploy role's IAM policy before first use.
 
 ---
 
 ## 13. Running Tests
 
-The .NET solution has a small xUnit suite (`tests/Tests`) covering the MCP tool-result decoding
-and the password hasher; ⚠️ the Python services have no test suites yet, and there are no
-integration/load tests. Commands:
+Three suites, all run by CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)) on every PR
+and push to master:
+
+- **pipeline** (pytest) — cleaning (date quirks, impossible-value nulling, dedup), imputation
+  (genre-median runtimes, real categories), augmentation (budget tiers, embedding text),
+  deterministic loader ids, and the Ollama client (retries, dimension guard) via mock transports.
+- **mcp-server** (pytest) — all six tools exercised end to end through FastMCP's **in-memory MCP
+  client** (schemas, structured output, and error mapping included) against fake db/embeddings
+  backends, plus the `/health` and `/metrics` HTTP routes.
+- **api** (xUnit, `tests/Tests`) — MCP tool-result decoding and the password hasher.
 
 ### Unit tests
 
 ```bash
-cd pipeline   && uv run pytest        # Python — cleaning/imputation/augmentation logic
-cd mcp-server && uv run pytest        # Python — tool logic, query building
-cd api/MovieSearch && dotnet test     # .NET — xUnit unit + integration tests
+cd pipeline   && uv sync && uv run pytest     # Python — pipeline stages + embeddings client
+cd mcp-server && uv sync && uv run pytest     # Python — MCP tools, models, HTTP endpoints
+cd api/MovieSearch && dotnet test             # .NET — xUnit
 ```
 
-### Integration tests
+### Load test (p95 < 500ms SLO)
 
 ```bash
-# Bring up the stack and exercise real endpoints against seeded data
-docker compose up -d --build
-docker compose run --rm pipeline
-cd api/MovieSearch && dotnet test --filter Category=Integration
+# Signs up its own throwaway users, then mixes search / by-id / similar / genres.
+# Thresholds fail the run if p95 >= 500ms or the error rate exceeds 1%.
+k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080
 ```
 
-### Load tests
-
-```bash
-# k6 targeting the search endpoint (scripts/load_test.js — ⚠️ not written yet)
-k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080 -e TOKEN=$TOKEN
-```
-
-**Linting/type-checking (intended for CI):** `ruff` + `mypy` for Python,
-`dotnet format --verify-no-changes` for .NET. No CI workflows exist yet
-([.github/workflows/](.github/workflows/) is empty).
+**Linting:** `ruff check .` in both Python projects (enforced by CI). CD
+([.github/workflows/cd.yml](.github/workflows/cd.yml)) builds and pushes the images to ECR via
+OIDC, auto-deploys **dev** with `terraform apply`, and promotes the same images to **prod** behind
+a manual approval on the `production` GitHub environment.
 
 ---
 
@@ -613,26 +616,28 @@ k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080 -e TOKEN=$TOKEN
   MCP tool calls, so if the MCP server is down those endpoints fail (auth and cached responses
   still work). The API `/health` surfaces this as the `mcp-server` dependency.
 - The API↔MCP hop adds a network round-trip per uncached read (Redis response caching in the
-  handlers absorbs repeat queries); no latency benchmark of the new path has been run yet.
-- **No CI/CD** ([.github/workflows/](.github/workflows/) empty) and **no Terraform**
-  ([terraform/](terraform/) empty).
+  handlers absorbs repeat queries); run the k6 load test (§13) against a loaded stack to validate
+  the p95 < 500ms SLO on your hardware.
+- The AWS stacks have not been applied to a real account yet — `terraform validate` passes and CI
+  enforces fmt/validate, but the first apply (see [terraform/README.md](terraform/README.md))
+  should be shepherded, and the deploy role's IAM policy reviewed by Security first.
 - No exported [openapi.json](openapi.json); the OpenAPI spec is served only
   in the Development environment.
 - Two embedding backends (Ollama + TEI) are both in compose; only Ollama is used (pipeline + MCP
-  server) — the TEI service could be dropped.
-- Ollama pulls model weights on first start (cold start ~1–2 min); healthchecks account for this.
+  server) — the TEI service could be dropped. The AWS stack deploys Ollama only.
+- Ollama pulls model weights on first start (cold start ~1–2 min locally; on AWS the EFS cache
+  makes it a one-time cost); healthchecks account for this.
 
 **Future improvements**
 
 - Integration tests that exercise the API → MCP server → pgvector path end to end
-  (unit tests currently cover the MCP result decoding and auth primitives).
-- Real test suites: pytest for pipeline/MCP, k6 load test validating p95 < 500ms.
+  (unit tests currently cover each side against fakes).
 - Cache-TTL tuning.
 - Hybrid search (vector similarity + full-text/metadata filters) with re-ranking.
 - Tune the pgvector **HNSW** index (`m`, `ef_search`) and benchmark recall vs. latency at scale.
-- CI/CD pipelines (lint, test, build, Compose integration, `terraform apply` to dev→prod) and the
-  Terraform stack itself.
-- Embedding Atlas bonus: `scripts/export_embeddings_atlas.py` + the `atlas` service Dockerfile.
+- HTTPS on the ALB (provide `acm_certificate_arn` once a domain/cert exists) and a Route53 alias.
+- Ship the local Grafana dashboard to the AWS environments (Amazon Managed Grafana or
+  container-based) — CloudWatch alarms cover the basics today.
 
 ---
 
