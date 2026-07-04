@@ -12,6 +12,9 @@ public static class UserErrors
     public static Error NotFound(Guid id) => new(
         "User.NotFound", $"User with id '{id}' does not exist");
 
+    public static Error NotFound(string email) => new(
+        "User.NotFound", $"User with email '{email}' does not exist");
+
     public static Error PasswordIncorrect() => new(
         "User.PasswordIncorrect", "The current password is incorrect");
 }
