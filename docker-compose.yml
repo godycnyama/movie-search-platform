@@ -259,6 +259,9 @@ services:
       RateLimitSettings__WindowSeconds: ${RateLimitSettings__WindowSeconds:-60}
       RateLimitSettings__QueueLimit: ${RateLimitSettings__QueueLimit:-0}
       RequestTimeoutSettings__DefaultTimeoutSeconds: ${RequestTimeoutSettings__DefaultTimeoutSeconds:-30}
+      CorsSettings__AllowedOrigins__0: ${CorsSettings__AllowedOrigins__0:-http://localhost:3000}
+      CorsSettings__AllowedOrigins__1: ${CorsSettings__AllowedOrigins__1:-http://localhost:5173}
+      # OTEL_* are the SDK-standard vars and take precedence over any OtelSettings__* in .env.
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_SERVICE_NAME: movie-search-api
     ports:
