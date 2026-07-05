@@ -3,7 +3,7 @@ using Infrastructure.Contracts.Mcp;
 using Infrastructure.Services;
 using ModelContextProtocol.Protocol;
 
-namespace Tests.Services;
+namespace MovieSearch.Tests.UnitTests.Services;
 
 /// <summary>
 /// Covers decoding of FastMCP tool results: the {"result": ...} envelope around
@@ -38,12 +38,11 @@ public class McpToolResultsTests
 
         var movies = McpToolResults.Deserialize<List<McpMovieResult>>(result);
 
-        Assert.NotNull(movies);
-        var movie = Assert.Single(movies);
-        Assert.Equal(Guid.Parse("9f8b6a4e-1c2d-4e3f-8a5b-6c7d8e9f0a1b"), movie.Id);
-        Assert.Equal("Heat", movie.Title);
-        Assert.Equal(60_000_000, movie.ProductionBudget);
-        Assert.Equal(0.9134, movie.SimilarityScore);
+        var movie = movies.ShouldNotBeNull().ShouldHaveSingleItem();
+        movie.Id.ShouldBe(Guid.Parse("9f8b6a4e-1c2d-4e3f-8a5b-6c7d8e9f0a1b"));
+        movie.Title.ShouldBe("Heat");
+        movie.ProductionBudget.ShouldBe(60_000_000);
+        movie.SimilarityScore.ShouldBe(0.9134);
     }
 
     [Fact]
@@ -62,13 +61,12 @@ public class McpToolResultsTests
 
         var stats = McpToolResults.Deserialize<McpDatasetStats>(result);
 
-        Assert.NotNull(stats);
-        var statistics = stats.ToStatistics();
-        Assert.Equal(3201, statistics.TotalMovies);
-        Assert.Equal(12, statistics.GenreCount);
-        Assert.Equal(1920, statistics.MinReleaseYear);
-        Assert.Equal(2010, statistics.MaxReleaseYear);
-        Assert.Equal("0.1.0", statistics.PipelineVersion);
+        var statistics = stats.ShouldNotBeNull().ToStatistics();
+        statistics.TotalMovies.ShouldBe(3201);
+        statistics.GenreCount.ShouldBe(12);
+        statistics.MinReleaseYear.ShouldBe(1920);
+        statistics.MaxReleaseYear.ShouldBe(2010);
+        statistics.PipelineVersion.ShouldBe("0.1.0");
     }
 
     [Fact]
@@ -80,9 +78,9 @@ public class McpToolResultsTests
 
         var statistics = McpToolResults.Deserialize<McpDatasetStats>(result)!.ToStatistics();
 
-        Assert.Null(statistics.MinReleaseYear);
-        Assert.Null(statistics.MaxReleaseYear);
-        Assert.Null(statistics.AverageImdbRating);
+        statistics.MinReleaseYear.ShouldBeNull();
+        statistics.MaxReleaseYear.ShouldBeNull();
+        statistics.AverageImdbRating.ShouldBeNull();
     }
 
     [Fact]
@@ -95,7 +93,7 @@ public class McpToolResultsTests
 
         var genres = McpToolResults.Deserialize<List<string>>(result);
 
-        Assert.Equal(["Action", "Drama"], genres);
+        genres.ShouldBe(["Action", "Drama"]);
     }
 
     [Fact]
@@ -104,13 +102,13 @@ public class McpToolResultsTests
         // A `MovieResult | None` tool returning None.
         var result = StructuredResult("""{"result": null}""");
 
-        Assert.Null(McpToolResults.Deserialize<McpMovieResult>(result));
+        McpToolResults.Deserialize<McpMovieResult>(result).ShouldBeNull();
     }
 
     [Fact]
     public void Deserialize_ReturnsNull_WhenTheResultCarriesNoPayload()
     {
-        Assert.Null(McpToolResults.Deserialize<McpMovieResult>(new CallToolResult()));
+        McpToolResults.Deserialize<McpMovieResult>(new CallToolResult()).ShouldBeNull();
     }
 
     [Fact]
@@ -122,7 +120,7 @@ public class McpToolResultsTests
             Content = [new TextContentBlock { Text = "Movie '123' does not exist" }],
         };
 
-        Assert.Equal("Movie '123' does not exist", McpToolResults.ErrorMessage(result));
+        McpToolResults.ErrorMessage(result).ShouldBe("Movie '123' does not exist");
     }
 
     [Fact]
@@ -130,7 +128,7 @@ public class McpToolResultsTests
     {
         var message = McpToolResults.ErrorMessage(new CallToolResult { IsError = true });
 
-        Assert.False(string.IsNullOrWhiteSpace(message));
+        message.ShouldNotBeNullOrWhiteSpace();
     }
 
     private static CallToolResult StructuredResult(string json) => new()

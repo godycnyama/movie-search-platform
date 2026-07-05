@@ -1,6 +1,6 @@
 using Infrastructure.Services;
 
-namespace Tests.Services;
+namespace MovieSearch.Tests.UnitTests.Services;
 
 public class Pbkdf2PasswordHasherTests
 {
@@ -11,7 +11,7 @@ public class Pbkdf2PasswordHasherTests
     {
         var hash = _hasher.Hash("correct horse battery staple");
 
-        Assert.True(_hasher.Verify("correct horse battery staple", hash));
+        _hasher.Verify("correct horse battery staple", hash).ShouldBeTrue();
     }
 
     [Fact]
@@ -19,13 +19,13 @@ public class Pbkdf2PasswordHasherTests
     {
         var hash = _hasher.Hash("correct horse battery staple");
 
-        Assert.False(_hasher.Verify("Tr0ub4dor&3", hash));
+        _hasher.Verify("Tr0ub4dor&3", hash).ShouldBeFalse();
     }
 
     [Fact]
     public void Hash_UsesAUniqueSaltPerCall()
     {
-        Assert.NotEqual(_hasher.Hash("same password"), _hasher.Hash("same password"));
+        _hasher.Hash("same password").ShouldNotBe(_hasher.Hash("same password"));
     }
 
     [Fact]
@@ -33,9 +33,9 @@ public class Pbkdf2PasswordHasherTests
     {
         var parts = _hasher.Hash("password").Split('.');
 
-        Assert.Equal(4, parts.Length);
-        Assert.Equal("pbkdf2-sha256", parts[0]);
-        Assert.True(int.Parse(parts[1]) >= 600_000);
+        parts.Length.ShouldBe(4);
+        parts[0].ShouldBe("pbkdf2-sha256");
+        int.Parse(parts[1]).ShouldBeGreaterThanOrEqualTo(600_000);
     }
 
     [Theory]
@@ -44,6 +44,6 @@ public class Pbkdf2PasswordHasherTests
     [InlineData("pbkdf2-sha256.abc.c2FsdA==.aGFzaA==")]   // non-numeric iterations
     public void Verify_ReturnsFalse_ForMalformedHashes(string malformed)
     {
-        Assert.False(_hasher.Verify("password", malformed));
+        _hasher.Verify("password", malformed).ShouldBeFalse();
     }
 }
