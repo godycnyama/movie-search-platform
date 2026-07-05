@@ -165,6 +165,12 @@ variable "jwt_audience" {
   default     = "movie-search-clients"
 }
 
+variable "cors_allowed_origins" {
+  description = "Browser origins allowed to call the API (CorsSettings.AllowedOrigins). Empty means no cross-origin access."
+  type        = list(string)
+  default     = []
+}
+
 variable "log_level" {
   description = "Log level for the Python services."
   type        = string

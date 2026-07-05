@@ -18,7 +18,8 @@ module "platform" {
   db_skip_final_snapshot = true
   redis_node_type        = "cache.t4g.micro"
 
-  acm_certificate_arn = var.acm_certificate_arn
+  acm_certificate_arn  = var.acm_certificate_arn
+  cors_allowed_origins = var.cors_allowed_origins
 
   github_repository           = var.github_repository
   create_github_oidc_provider = var.create_github_oidc_provider

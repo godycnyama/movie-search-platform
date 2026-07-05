@@ -115,9 +115,10 @@ module "compute" {
   bedrock_embedding_model_id = var.bedrock_embedding_model_id
   embedding_dim              = var.embedding_dim
 
-  jwt_issuer   = var.jwt_issuer
-  jwt_audience = var.jwt_audience
-  log_level    = var.log_level
+  jwt_issuer           = var.jwt_issuer
+  jwt_audience         = var.jwt_audience
+  cors_allowed_origins = var.cors_allowed_origins
+  log_level            = var.log_level
 
   log_retention_days = var.log_retention_days
 }

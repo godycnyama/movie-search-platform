@@ -44,3 +44,9 @@ variable "alarm_email" {
   type        = string
   default     = ""
 }
+
+variable "cors_allowed_origins" {
+  description = "Browser origins allowed to call the API (CorsSettings.AllowedOrigins). Empty means no cross-origin access."
+  type        = list(string)
+  default     = []
+}

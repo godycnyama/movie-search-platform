@@ -35,7 +35,7 @@ resource "aws_ecs_task_definition" "api" {
 
       portMappings = [{ containerPort = 8080, protocol = "tcp" }]
 
-      environment = [
+      environment = concat([
         { name = "ASPNETCORE_ENVIRONMENT", value = "Production" },
         { name = "ASPNETCORE_URLS", value = "http://+:8080" },
         { name = "OTEL_EXPORTER_OTLP_ENDPOINT", value = "http://127.0.0.1:4317" },
@@ -45,7 +45,22 @@ resource "aws_ecs_task_definition" "api" {
         { name = "McpSettings__Transport", value = var.mcp_transport },
         { name = "JwtSettings__Issuer", value = var.jwt_issuer },
         { name = "JwtSettings__Audience", value = var.jwt_audience },
-      ]
+        { name = "JwtSettings__ExpiryMinutes", value = tostring(var.jwt_expiry_minutes) },
+        # RedisSettings — connection string arrives via the runtime secret; these tune it.
+        { name = "RedisSettings__InstanceName", value = var.redis_instance_name },
+        { name = "RedisSettings__DefaultTtlSeconds", value = tostring(var.redis_default_ttl_seconds) },
+        { name = "RedisSettings__AbortOnConnectFail", value = tostring(var.redis_abort_on_connect_fail) },
+        { name = "RedisSettings__UseSsl", value = tostring(var.redis_use_ssl) },
+        # RateLimitSettings / RequestTimeoutSettings.
+        { name = "RateLimitSettings__PermitLimit", value = tostring(var.rate_limit_permit) },
+        { name = "RateLimitSettings__WindowSeconds", value = tostring(var.rate_limit_window_seconds) },
+        { name = "RateLimitSettings__QueueLimit", value = tostring(var.rate_limit_queue_limit) },
+        { name = "RequestTimeoutSettings__DefaultTimeoutSeconds", value = tostring(var.request_timeout_seconds) },
+        ], [
+        # CorsSettings.AllowedOrigins is a bound array: Section__AllowedOrigins__<index>.
+        for i, origin in var.cors_allowed_origins :
+        { name = "CorsSettings__AllowedOrigins__${i}", value = origin }
+      ])
 
       dependsOn = [
         { containerName = "aws-otel-collector", condition = "START" }
