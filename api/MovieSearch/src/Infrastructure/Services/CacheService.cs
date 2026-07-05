@@ -111,7 +111,7 @@ public sealed class CacheService : ICacheService, IDisposable
         }
     }
 
-    private IDatabase Database => _connection.Value.GetDatabase(_settingsMonitor.CurrentValue.Database);
+    private IDatabase Database => _connection.Value.GetDatabase();
 
     private TimeSpan DefaultTtl => TimeSpan.FromSeconds(_settingsMonitor.CurrentValue.DefaultTtlSeconds);
 
@@ -124,12 +124,8 @@ public sealed class CacheService : ICacheService, IDisposable
     private static ConfigurationOptions BuildConfiguration(RedisSettings settings)
     {
         var configuration = ConfigurationOptions.Parse(settings.ConnectionString);
-        configuration.ConnectTimeout = settings.ConnectTimeoutMs;
-        configuration.SyncTimeout = settings.SyncTimeoutMs;
-        configuration.ConnectRetry = settings.ConnectRetry;
         configuration.AbortOnConnectFail = settings.AbortOnConnectFail;
         configuration.Ssl = settings.UseSsl;
-        configuration.DefaultDatabase = settings.Database;
         return configuration;
     }
 }
