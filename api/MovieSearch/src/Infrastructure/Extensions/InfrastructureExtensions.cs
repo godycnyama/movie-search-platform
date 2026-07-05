@@ -28,6 +28,15 @@ public static class InfrastructureExtensions
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
+        // Bound from the McpSettings__* env vars (docker-compose). Without this the
+        // IOptionsMonitor<McpSettings> injected into McpMovieCatalogService returns a
+        // default instance with an empty ServerUrl, so the transport endpoint becomes
+        // a relative URI ("/sse") and fails with "Endpoint must use HTTP or HTTPS scheme".
+        services.AddOptions<McpSettings>()
+                .BindConfiguration(nameof(McpSettings))
+                .ValidateDataAnnotations()
+                .ValidateOnStart();
+
         var postgresSettings = configuration.GetSection(nameof(PostgresSettings)).Get<PostgresSettings>()
             ?? throw new InvalidOperationException($"Missing '{nameof(PostgresSettings)}' configuration section.");
 

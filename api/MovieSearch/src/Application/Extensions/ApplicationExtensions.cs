@@ -21,7 +21,12 @@ public static class ApplicationExtensions
             options.AssumeDefaultVersionWhenUnspecified = true;
             options.ReportApiVersions = true;
             options.ApiVersionReader = new UrlSegmentApiVersionReader();
-        });
+        })
+        .AddApiExplorer(options =>
+            {
+                options.GroupNameFormat = "'v'VVV";
+                options.SubstituteApiVersionInUrl = true;
+            });
 
         // Carter discovers the ICarterModule endpoint slices in Features/.
         builder.Services.AddCarter();

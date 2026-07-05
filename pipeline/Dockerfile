@@ -19,6 +19,13 @@ RUN uv sync --frozen --no-dev --no-install-project
 COPY pipeline/alembic.ini ./
 COPY pipeline/src ./src
 
+# Make models.py + the pipeline package importable. Alembic's env.py derives
+# pipeline/src from the repo layout (…/database/migrations sibling of pipeline/),
+# but the image flattens that to /app/src and /database/migrations, so that
+# derivation misses. `python src/main.py` gets /app/src on sys.path[0] for free;
+# alembic (run from /database/migrations) does not — PYTHONPATH covers both.
+ENV PYTHONPATH=/app/src
+
 # alembic.ini resolves the versions as %(here)s/../database/migrations, i.e.
 # /database/migrations. docker-compose still bind-mounts the same path read-only
 # for local live-editing; on ECS the baked copy is used.

@@ -78,21 +78,6 @@ services:
     networks: [movie-net]
     restart: unless-stopped
   
-  fix-embeddings-config:
-    image: alpine:3.20
-    volumes:
-      - model-cache:/data
-    entrypoint: ["sh", "-c"]
-    command:
-      - |
-        apk add --no-cache jq >/dev/null
-        f=$(find /data -iname config.json -path '*nomic*' 2>/dev/null)
-        if [ -n "$$f" ]; then
-          jq '.' "$$f" > /tmp/fixed.json && cp /tmp/fixed.json "$$f"
-          echo "Patched $$f"
-        else
-          echo "No cached config.json found yet — nothing to patch"
-        fi
   # ---------------------------------------------------------------------------
   # Embedding model server — runs as its own container (no in-process download).
   # nomic-embed-text-v1.5 (768 dimensions) served over HTTP. This is the local
@@ -107,11 +92,9 @@ services:
   embeddings:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     container_name: msp-embeddings
-    depends_on:
-      fix-embeddings-config:
-        condition: service_completed_successfully
-        
-    command: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--port", "8001"]
+    # --max-client-batch-size must be >= the pipeline's PIPELINE_BATCH_SIZE (64),
+    # or TEI rejects a full batch with 422 "batch size N > maximum allowed batch size".
+    command: ["--model-id", "BAAI/bge-base-en-v1.5", "--port", "8001", "--max-client-batch-size", "128"]
     environment:
       # HF_TOKEN is optional for public models; supply via .env only if needed.
       HF_TOKEN: ${HF_TOKEN}
