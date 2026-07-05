@@ -250,6 +250,15 @@ services:
       JwtSettings__Issuer: ${JWT_ISSUER:-movie-search-platform}
       JwtSettings__Audience: ${JWT_AUDIENCE:-movie-search-clients}
       JwtSettings__SigningKey: ${JWT_SIGNING_KEY:?set JWT_SIGNING_KEY in .env}
+      JwtSettings__ExpiryMinutes: ${JwtSettings__ExpiryMinutes:-60}
+      RedisSettings__InstanceName: ${RedisSettings__InstanceName:-movie-search:}
+      RedisSettings__DefaultTtlSeconds: ${RedisSettings__DefaultTtlSeconds:-300}
+      RedisSettings__AbortOnConnectFail: ${RedisSettings__AbortOnConnectFail:-false}
+      RedisSettings__UseSsl: ${RedisSettings__UseSsl:-false}
+      RateLimitSettings__PermitLimit: ${RateLimitSettings__PermitLimit:-60}
+      RateLimitSettings__WindowSeconds: ${RateLimitSettings__WindowSeconds:-60}
+      RateLimitSettings__QueueLimit: ${RateLimitSettings__QueueLimit:-0}
+      RequestTimeoutSettings__DefaultTimeoutSeconds: ${RequestTimeoutSettings__DefaultTimeoutSeconds:-30}
       OTEL_EXPORTER_OTLP_ENDPOINT: http://jaeger:4317
       OTEL_SERVICE_NAME: movie-search-api
     ports:
