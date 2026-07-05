@@ -1,13 +1,12 @@
-using System.Globalization;
-using System.Security.Claims;
-using System.Threading.RateLimiting;
 using Api.Settings;
 using Microsoft.AspNetCore.Http.Timeouts;
-using Microsoft.AspNetCore.RateLimiting;
 using Npgsql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
 using OpenTelemetry.Trace;
+using System.Globalization;
+using System.Security.Claims;
+using System.Threading.RateLimiting;
 
 namespace Api.Extensions;
 
@@ -37,7 +36,7 @@ public static class ApiExtensions
             {
                 tracing.AddAspNetCoreInstrumentation()
                        .AddHttpClientInstrumentation()
-                       .AddNpgsql()             // pgvector similarity queries
+                       .AddNpgsql()
                        .AddSource("Wolverine"); // CQRS handler spans
 
                 if (!string.IsNullOrEmpty(otlpEndpoint))

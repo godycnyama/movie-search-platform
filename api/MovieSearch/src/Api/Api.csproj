@@ -33,6 +33,12 @@
   </ItemGroup>
 
   <ItemGroup>
+    <!-- Expose the implicit Program class to the test project so
+         WebApplicationFactory<Program> can boot the API for integration tests. -->
+    <InternalsVisibleTo Include="MovieSearch.Tests" />
+  </ItemGroup>
+
+  <ItemGroup>
     <Folder Include="Extensions\" />
   </ItemGroup>
 
