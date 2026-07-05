@@ -4,7 +4,7 @@ aws_region        = "eu-west-1"
 image_tag         = "bootstrap" # first apply only; CD passes the commit SHA afterwards
 github_repository = "<org>/<repo>"
 
-# From terraform/bootstrap outputs:
+# From your separately-managed state backend (S3 bucket + DynamoDB lock table):
 terraform_state_bucket_arn = "arn:aws:s3:::<state-bucket-name>"
 terraform_lock_table_arn   = "arn:aws:dynamodb:eu-west-1:<account-id>:table/movie-search-terraform-locks"
 

@@ -1,6 +1,7 @@
-# Copy to backend.hcl (git-ignored) and fill in the bootstrap outputs, then:
+# Copy to backend.hcl (git-ignored) and fill in your separately-managed
+# state backend (S3 bucket + DynamoDB lock table), then:
 #   terraform init -backend-config=backend.hcl
-bucket         = "<state-bucket-name-from-bootstrap>"
+bucket         = "<state-bucket-name>"
 key            = "movie-search/prod/terraform.tfstate"
 region         = "eu-west-1"
 dynamodb_table = "movie-search-terraform-locks"

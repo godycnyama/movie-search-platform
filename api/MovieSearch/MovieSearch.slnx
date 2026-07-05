@@ -10,6 +10,6 @@
     <Project Path="src/Infrastructure/Infrastructure.csproj" />
   </Folder>
   <Folder Name="/tests/">
-    <Project Path="tests/Tests/Tests.csproj" />
+    <Project Path="tests/Tests/MovieSearch.Tests.csproj" />
   </Folder>
 </Solution>

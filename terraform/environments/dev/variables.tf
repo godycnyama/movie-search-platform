@@ -28,13 +28,13 @@ variable "create_github_oidc_provider" {
 }
 
 variable "terraform_state_bucket_arn" {
-  description = "State bucket ARN from terraform/bootstrap."
+  description = "ARN of the separately-managed S3 state bucket."
   type        = string
   default     = ""
 }
 
 variable "terraform_lock_table_arn" {
-  description = "Lock table ARN from terraform/bootstrap."
+  description = "ARN of the separately-managed DynamoDB lock table."
   type        = string
   default     = ""
 }

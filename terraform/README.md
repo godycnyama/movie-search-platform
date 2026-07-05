@@ -18,14 +18,16 @@ terraform/
 │   ├── rds/           # PostgreSQL 16 + pgvector, private subnets only
 │   ├── elasticache/   # Redis 7 (AUTH + TLS), allkeys-lru
 │   ├── alb/           # public ALB, /health target group, optional HTTPS
-│   ├── ecs/           # cluster, Cloud Map, task defs, services, autoscaling
+│   ├── compute/       # ECS Fargate cluster, Cloud Map, task defs, services, autoscaling
 │   ├── iam/           # GitHub OIDC provider + deploy role
 │   └── monitoring/    # CloudWatch alarms -> SNS
-├── environments/
-│   ├── dev/           # HTTP ALB, single-AZ db, t4g.micro sizes
-│   └── prod/          # Multi-AZ db, deletion protection, t4g.small sizes
-└── bootstrap/         # one-time S3 state bucket + DynamoDB lock table
+└── environments/
+    ├── dev/           # HTTP ALB, single-AZ db, t4g.micro sizes
+    └── prod/          # Multi-AZ db, deletion protection, t4g.small sizes
 ```
+
+The S3 state bucket and DynamoDB lock table are **not** part of this stack — they
+are provisioned and managed separately (see [First-time setup](#first-time-setup)).
 
 ## Traffic and data flow
 
@@ -47,21 +49,20 @@ or plain environment variables.
 
 ## First-time setup
 
-```bash
-# 1. State backend (once per account)
-cd terraform/bootstrap
-terraform init
-terraform apply -var state_bucket_name=<globally-unique-name>
+The remote state backend — an **S3 bucket + DynamoDB lock table** — is managed
+**separately** from this stack (its own repo/process, once per account). Create
+it there first, then wire its values into each environment:
 
-# 2. Dev environment
-cd ../environments/dev
-cp backend.hcl.example backend.hcl           # fill in bootstrap outputs
+```bash
+# Dev environment (repeat for environments/prod before the first prod CD run)
+cd terraform/environments/dev
+cp backend.hcl.example backend.hcl           # fill in the state bucket + lock table
 cp terraform.tfvars.example terraform.tfvars # fill in repo + state ARNs
 terraform init -backend-config=backend.hcl
 terraform apply
 ```
 
-Bootstrap **prod** the same way (`environments/prod`) before the first CD run —
+Set up **prod** (`environments/prod`) the same way before the first CD run —
 CD promotes images into the prod ECR repositories, so they must already exist.
 
 The first apply creates the ECR repositories before any image exists — the ECS

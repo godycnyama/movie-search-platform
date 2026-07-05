@@ -194,13 +194,13 @@ variable "create_github_oidc_provider" {
 }
 
 variable "terraform_state_bucket_arn" {
-  description = "ARN of the S3 state bucket the deploy role may read/write (from bootstrap)."
+  description = "ARN of the S3 state bucket the deploy role may read/write (separately managed)."
   type        = string
   default     = ""
 }
 
 variable "terraform_lock_table_arn" {
-  description = "ARN of the DynamoDB lock table the deploy role may use (from bootstrap)."
+  description = "ARN of the DynamoDB lock table the deploy role may use (separately managed)."
   type        = string
   default     = ""
 }

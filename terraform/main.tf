@@ -75,8 +75,8 @@ module "alb" {
   acm_certificate_arn = var.acm_certificate_arn
 }
 
-module "ecs" {
-  source = "./modules/ecs"
+module "compute" {
+  source = "./modules/compute"
 
   name_prefix        = local.name_prefix
   environment        = var.environment
@@ -139,8 +139,8 @@ module "monitoring" {
 
   name_prefix          = local.name_prefix
   alarm_email          = var.alarm_email
-  cluster_name         = module.ecs.cluster_name
-  service_names        = [module.ecs.api_service_name, module.ecs.mcp_service_name]
+  cluster_name         = module.compute.cluster_name
+  service_names        = [module.compute.api_service_name, module.compute.mcp_service_name]
   xray_service_names   = ["movie-search-api", "mcp-server"]
   alb_arn_suffix       = module.alb.arn_suffix
   target_group_suffix  = module.alb.target_group_arn_suffix
