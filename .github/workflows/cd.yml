@@ -21,8 +21,8 @@
 # Required repository VARIABLES (Settings -> Secrets and variables -> Actions):
 #   AWS_REGION           e.g. eu-west-1
 #   AWS_DEPLOY_ROLE_ARN  terraform output github_deploy_role_arn (dev stack)
-#   TF_STATE_BUCKET      terraform/bootstrap output state_bucket_name
-#   TF_LOCK_TABLE        terraform/bootstrap output lock_table_name
+#   TF_STATE_BUCKET      name of the separately-managed S3 state bucket
+#   TF_LOCK_TABLE        name of the separately-managed DynamoDB lock table
 #
 # Required GitHub ENVIRONMENTS, BOTH with required reviewers (the manual gates):
 #   `dev`  and  `production`

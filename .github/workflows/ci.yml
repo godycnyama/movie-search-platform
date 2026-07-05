@@ -171,9 +171,9 @@ jobs:
       - name: Format check
         run: terraform fmt -check -recursive
 
-      - name: Validate (dev, prod, bootstrap)
+      - name: Validate (dev, prod)
         run: |
-          for dir in environments/dev environments/prod bootstrap; do
+          for dir in environments/dev environments/prod; do
             echo "::group::$dir"
             terraform -chdir="$dir" init -backend=false -input=false > /dev/null
             terraform -chdir="$dir" validate
