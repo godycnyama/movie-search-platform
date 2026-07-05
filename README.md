@@ -553,17 +553,19 @@ on HTTPS + redirect), and CloudWatch alarms → SNS.
 ```
 terraform/
 ├── main.tf · variables.tf · outputs.tf · versions.tf    # platform composition module
-├── modules/{networking,ecr,secrets,rds,elasticache,alb,ecs,iam,monitoring}/
-├── environments/{dev,prod}/                             # dev: single-AZ; prod: Multi-AZ + protection
-└── bootstrap/                                           # one-time S3 state bucket + DynamoDB locks
+├── modules/{networking,ecr,secrets,rds,elasticache,alb,compute,iam,monitoring}/
+└── environments/{dev,prod}/                             # dev: single-AZ; prod: Multi-AZ + protection
 ```
+
+The S3 state bucket + DynamoDB lock table are provisioned and managed separately
+(their own repo/process), then referenced via each environment's `backend.hcl`.
 
 Infrastructure guarantees: all secrets **generated in-stack** and stored in Secrets Manager
 (injected into tasks via `valueFrom` — no credentials in tfvars, source, or plain env vars);
 compute uses IAM roles (GitHub deploys via **OIDC**, no access keys); RDS/Redis in private subnets
-only; CPU-based auto-scaling; **VPC Flow Logs** enabled; **remote state in S3 with DynamoDB
-locking** (`terraform/bootstrap`); every resource tagged `Environment`, `Project`, `ManagedBy` via
-provider `default_tags`.
+only; CPU- and memory-based auto-scaling; **VPC Flow Logs** enabled; **remote state in S3 with
+DynamoDB locking** (managed separately); every resource tagged `Environment`, `Project`, `ManagedBy`
+via provider `default_tags`.
 
 - Never commit real `*.tfvars` or `backend.hcl` (both git-ignored; `.example` templates provided).
 - Deployment targets the organisation's own AWS account only — do not use public/consumer hosting.
