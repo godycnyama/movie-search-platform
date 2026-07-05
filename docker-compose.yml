@@ -22,7 +22,8 @@
 x-postgres-env: &postgres-env
   POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
   POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
-  POSTGRES_DB: ${POSTGRES_DB:-movies}
+  # One shared database for the api, mcp-server and pipeline, postfixed with the environment.
+  POSTGRES_DB: ${POSTGRES_DB:-movies-dev}
 
 services:
   # ---------------------------------------------------------------------------
@@ -162,7 +163,7 @@ services:
       dockerfile: pipeline/Dockerfile
     container_name: msp-pipeline
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies-dev}
       # local -> Ollama container (dev/prod use Bedrock; see pipeline/embedding.py).
       ENV: ${ENV:-local}
       OLLAMA_URL: http://ollama:11434
@@ -196,7 +197,7 @@ services:
       context: ./mcp-server        # requires mcp-server/Dockerfile
     container_name: msp-mcp-server
     environment:
-      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies}
+      DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies-dev}
       # local -> Ollama container (dev/prod use Bedrock; see server/embeddings.py).
       ENV: ${ENV:-local}
       OLLAMA_URL: http://ollama:11434
@@ -242,7 +243,7 @@ services:
     environment:
       ASPNETCORE_ENVIRONMENT: ${ASPNETCORE_ENVIRONMENT:-Development}
       ASPNETCORE_URLS: http://+:8080
-      PostgresSettings__PostgresConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-movies};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
+      PostgresSettings__PostgresConnectionString: Host=postgres;Port=5432;Database=${POSTGRES_DB:-movies-dev};Username=${POSTGRES_USER};Password=${POSTGRES_PASSWORD}
       # Movie data source: the MCP server's tools (transport must match MCP_TRANSPORT).
       McpSettings__ServerUrl: http://mcp-server:8000
       McpSettings__Transport: ${MCP_TRANSPORT:-sse}
