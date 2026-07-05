@@ -24,11 +24,6 @@ public static class InfrastructureExtensions
                 .ValidateDataAnnotations()
                 .ValidateOnStart();
 
-        services.AddOptions<McpSettings>()
-                .BindConfiguration(nameof(McpSettings))
-                .ValidateDataAnnotations()
-                .ValidateOnStart();
-
         services.AddOptions<RedisSettings>()
                 .BindConfiguration(nameof(RedisSettings))
                 .ValidateDataAnnotations()
