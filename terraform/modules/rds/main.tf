@@ -43,7 +43,9 @@ resource "aws_db_instance" "this" {
   storage_type          = "gp3"
   storage_encrypted     = true
 
-  db_name  = var.db_name
+  # No db_name: the shared application database (movies-<env>) is created
+  # out-of-band because RDS rejects hyphens in an auto-created database name.
+  # The instance still provisions the default "postgres" maintenance database.
   username = var.db_username
   password = var.db_password
   port     = 5432

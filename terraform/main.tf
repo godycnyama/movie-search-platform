@@ -10,6 +10,11 @@
 
 locals {
   name_prefix = "${var.project_name}-${var.environment}"
+
+  # Single database shared by the api, mcp-server and pipeline, postfixed with the
+  # environment (e.g. movies-dev / movies-prod). Created out-of-band — RDS cannot
+  # auto-create a database whose name contains a hyphen.
+  database_name = "${var.db_name}-${var.environment}"
 }
 
 module "networking" {
@@ -40,7 +45,6 @@ module "rds" {
   vpc_id                 = module.networking.vpc_id
   private_subnet_ids     = module.networking.private_subnet_ids
   ingress_sg_id          = module.networking.tasks_security_group_id
-  db_name                = var.db_name
   db_username            = var.db_username
   db_password            = module.secrets.db_password
   instance_class         = var.db_instance_class
@@ -98,7 +102,7 @@ module "compute" {
 
   db_address       = module.rds.address
   db_port          = module.rds.port
-  db_name          = var.db_name
+  db_name          = local.database_name
   db_username      = var.db_username
   db_password      = module.secrets.db_password
   redis_address    = module.elasticache.primary_endpoint_address

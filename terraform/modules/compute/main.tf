@@ -71,6 +71,8 @@ resource "aws_secretsmanager_secret_version" "runtime" {
   secret_id = aws_secretsmanager_secret.runtime.id
 
   secret_string = jsonencode({
+    # Both services target the one shared database (var.db_name = movies-<env>):
+    # the api owns the users table, the pipeline/mcp-server own the movies table.
     # .NET API (Npgsql). RDS enforces TLS.
     postgres_connstring = "Host=${var.db_address};Port=${var.db_port};Database=${var.db_name};Username=${var.db_username};Password=${var.db_password};SSL Mode=Require;Trust Server Certificate=true"
     # Python services (asyncpg / psycopg).

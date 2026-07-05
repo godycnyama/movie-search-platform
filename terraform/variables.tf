@@ -73,7 +73,7 @@ variable "service_max_count" {
 # --- Database -----------------------------------------------------------------
 
 variable "db_name" {
-  description = "PostgreSQL database name."
+  description = "Base name of the shared database; the environment is appended (e.g. movies -> movies-dev)."
   type        = string
   default     = "movies"
 }

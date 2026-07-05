@@ -72,7 +72,8 @@ variable "db_port" {
 }
 
 variable "db_name" {
-  type = string
+  description = "Shared application database (movies-<env>), used by the api and mcp-server."
+  type        = string
 }
 
 variable "db_username" {
