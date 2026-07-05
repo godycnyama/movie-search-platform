@@ -7,6 +7,7 @@ using Infrastructure;
 using Infrastructure.Extensions;
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Scalar.AspNetCore;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -26,6 +27,12 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 app.MapOpenApi();
+app.MapScalarApiReference(options =>
+{
+    options.WithTitle("Movie Search API")
+        .WithTheme(ScalarTheme.Moon)
+        .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
+});
 
 app.UseHttpsRedirection();
 

@@ -19,6 +19,7 @@
     <PackageReference Include="OpenTelemetry.Extensions.Hosting" />
     <PackageReference Include="OpenTelemetry.Instrumentation.AspNetCore" />
     <PackageReference Include="OpenTelemetry.Instrumentation.Http" />
+    <PackageReference Include="Scalar.AspNetCore" />
     <!-- Wolverine compiles handler pipelines at runtime in dev; the Roslyn generator
          is opt-in since Wolverine 6 and auto-registers when this package is referenced.
          For production images, switch to pre-generated code ("codegen write" CLI +
