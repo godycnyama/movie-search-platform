@@ -5,23 +5,19 @@ wrong shape) fails immediately with a precise pydantic error instead of a
 ``KeyError`` deep inside a batch loop.
 """
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel
 
 
-class OllamaEmbedRequest(BaseModel):
-    """Body for Ollama's batch ``POST /api/embed``."""
+class TeiEmbedRequest(BaseModel):
+    """Body for TEI's batch ``POST /embed`` (HuggingFace Text Embeddings Inference).
 
-    model: str
-    input: list[str]
+    TEI serves a single model, so — unlike Ollama — the model name is not part of
+    the request. ``normalize`` returns unit vectors (cosine-ready, matching the
+    pgvector cosine index); ``truncate`` guards against inputs longer than the
+    model's max sequence length. The response is a bare ``list[list[float]]`` —
+    one vector per input, in order — so it needs no wrapper model.
+    """
 
-
-class OllamaEmbedResponse(BaseModel):
-    """Response from ``POST /api/embed`` — one vector per input, in order."""
-
-    # Ollama adds timing/telemetry fields freely; only validate what we use.
-    model_config = ConfigDict(extra="ignore")
-
-    model: str | None = None
-    embeddings: list[list[float]]
-    total_duration: int | None = None
-    prompt_eval_count: int | None = None
+    inputs: list[str]
+    normalize: bool = True
+    truncate: bool = True

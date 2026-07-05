@@ -1,6 +1,6 @@
 """Movie Search Platform data pipeline (README §5-6).
 
-Clean -> impute -> augment -> embed (Ollama) -> load (pgvector), end to end.
+Clean -> impute -> augment -> embed (TEI) -> load (pgvector), end to end.
 Idempotent: movie ids are deterministic, so re-running upserts in place.
 
 Configuration: see ``pipeline.settings.PipelineSettings`` — typed settings bound

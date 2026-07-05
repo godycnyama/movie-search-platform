@@ -4,13 +4,13 @@ Queries must be embedded with the SAME model the pipeline used for the
 catalogue, or cosine similarity is meaningless. Which backend that is depends on
 the environment:
 
-    ENV=local        -> Ollama (the docker-compose container)
+    ENV=local        -> TEI (the docker-compose ``embeddings`` container)
     ENV=dev|prod     -> Amazon Bedrock
 
 ``create_embeddings_provider`` selects the backend from ``Settings``; both
 implement the ``EmbeddingsProvider`` protocol so the tools never know which one
-they are talking to. Requests/responses go through Pydantic contracts (Ollama)
-or the Bedrock JSON schema, and a dimension mismatch fails fast — loading or
+they are talking to. Requests/responses go through Pydantic contracts (TEI) or
+the Bedrock JSON schema, and a dimension mismatch fails fast — loading or
 querying wrong-sized vectors would silently corrupt search.
 """
 
@@ -20,11 +20,14 @@ import logging
 from typing import Protocol, runtime_checkable
 
 import httpx
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, TypeAdapter
 
 from config import Settings
 
 logger = logging.getLogger(__name__)
+
+# TEI's ``/embed`` returns a bare array of vectors; validate it at the boundary.
+_TeiEmbedResponse = TypeAdapter(list[list[float]])
 
 
 @runtime_checkable
@@ -41,24 +44,27 @@ class EmbeddingsProvider(Protocol):
         ...
 
 
-class OllamaEmbedRequest(BaseModel):
-    """Body for Ollama's batch ``POST /api/embed``."""
+class TeiEmbedRequest(BaseModel):
+    """Body for TEI's batch ``POST /embed`` (HuggingFace Text Embeddings Inference).
 
-    model: str
-    input: list[str]
+    TEI serves a single model, so the model name is not part of the request.
+    ``normalize`` returns unit vectors (cosine-ready); ``truncate`` guards against
+    inputs longer than the model's max sequence length. The response is a bare
+    ``list[list[float]]`` — one vector per input, in order.
+    """
 
-
-class OllamaEmbedResponse(BaseModel):
-    """Response from ``POST /api/embed`` — one vector per input, in order."""
-
-    # Ollama adds timing/telemetry fields freely; only validate what we use.
-    model_config = ConfigDict(extra="ignore")
-
-    embeddings: list[list[float]]
+    inputs: list[str]
+    normalize: bool = True
+    truncate: bool = True
 
 
-class OllamaEmbeddingsClient:
-    """Local backend: thin async client for Ollama's ``/api/embed`` endpoint."""
+class TeiEmbeddingsClient:
+    """Local backend: thin async client for TEI's ``/embed`` endpoint (the
+    docker-compose ``embeddings`` container).
+
+    ``model`` is not sent to TEI (it serves a single model) — it is retained only
+    to label dimension-mismatch errors.
+    """
 
     def __init__(self, base_url: str, model: str, expected_dim: int, timeout: float = 60.0):
         self._client = httpx.AsyncClient(base_url=base_url, timeout=timeout)
@@ -66,12 +72,11 @@ class OllamaEmbeddingsClient:
         self._expected_dim = expected_dim
 
     async def embed_query(self, text: str) -> list[float]:
-        request = OllamaEmbedRequest(model=self._model, input=[text])
-        response = await self._client.post("/api/embed", json=request.model_dump())
+        request = TeiEmbedRequest(inputs=[text])
+        response = await self._client.post("/embed", json=request.model_dump())
         response.raise_for_status()
 
-        parsed = OllamaEmbedResponse.model_validate_json(response.content)
-        [vector] = parsed.embeddings
+        [vector] = _TeiEmbedResponse.validate_json(response.content)
         _check_dim(vector, self._expected_dim, self._model)
         return vector
 
@@ -90,7 +95,7 @@ class BedrockEmbeddingsClient:
     """
 
     def __init__(self, region: str, model_id: str, expected_dim: int):
-        # Lazy import so the local (Ollama) path needs neither boto3 nor AWS creds.
+        # Lazy import so the local (TEI) path needs neither boto3 nor AWS creds.
         import boto3
 
         self._client = boto3.client("bedrock-runtime", region_name=region)
@@ -122,7 +127,7 @@ def resolve_provider_name(settings: Settings) -> str:
     """Maps the environment (or explicit override) to a backend name."""
     if settings.embedding_provider != "auto":
         return settings.embedding_provider
-    return "ollama" if settings.env == "local" else "bedrock"
+    return "tei" if settings.env == "local" else "bedrock"
 
 
 def create_embeddings_provider(settings: Settings) -> EmbeddingsProvider:
@@ -133,9 +138,9 @@ def create_embeddings_provider(settings: Settings) -> EmbeddingsProvider:
         extra={"provider": provider, "environment": settings.env},
     )
 
-    if provider == "ollama":
-        return OllamaEmbeddingsClient(
-            settings.ollama_url, settings.embedding_model, settings.embedding_dim
+    if provider == "tei":
+        return TeiEmbeddingsClient(
+            settings.embeddings_url, settings.embedding_model, settings.embedding_dim
         )
     if provider == "bedrock":
         return BedrockEmbeddingsClient(

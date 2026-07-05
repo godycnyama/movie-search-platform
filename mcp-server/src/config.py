@@ -33,28 +33,28 @@ class Settings(BaseSettings):
     db_pool_max_size: int = Field(default=10, ge=1, description="asyncpg pool ceiling.")
 
     # --- Embeddings: swappable backend (see server/embeddings.py) ------------
-    # ENV selects the query-embedding backend: `local` uses the Ollama container,
-    # `dev`/`prod` use Amazon Bedrock. MUST match the backend (and model) the
-    # pipeline embedded the catalogue with, or cosine similarity is meaningless.
-    # `embedding_provider` can override the environment-derived choice explicitly
-    # (mainly for tests).
+    # ENV selects the query-embedding backend: `local` uses the TEI `embeddings`
+    # container, `dev`/`prod` use Amazon Bedrock. MUST match the backend (and
+    # model) the pipeline embedded the catalogue with, or cosine similarity is
+    # meaningless. `embedding_provider` can override the environment-derived
+    # choice explicitly (mainly for tests).
     env: Literal["local", "dev", "prod"] = Field(
         default="local",
         description="Deployment environment; drives the default embedding backend.",
     )
-    embedding_provider: Literal["auto", "ollama", "bedrock"] = Field(
+    embedding_provider: Literal["auto", "tei", "bedrock"] = Field(
         default="auto",
         description="Explicit backend override; 'auto' derives it from env.",
     )
 
-    ollama_url: str = Field(
-        default="http://localhost:11434",
-        description="Base URL of the Ollama server that embeds search queries (local backend).",
+    embeddings_url: str = Field(
+        default="http://localhost:8001",
+        description="Base URL of the TEI server that embeds search queries (local backend).",
     )
 
     embedding_model: str = Field(
-        default="nomic-embed-text",
-        description="Ollama model; MUST be the same model the pipeline embedded with.",
+        default="nomic-embed-text-v1.5",
+        description="Embedding model label; MUST be the same model the pipeline embedded with.",
     )
 
     bedrock_region: str = Field(

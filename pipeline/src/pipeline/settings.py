@@ -31,26 +31,26 @@ class PipelineSettings(BaseSettings):
     )
 
     # --- Embeddings: swappable backend (see pipeline/embedding.py) -----------
-    # ENV selects the embedding backend: `local` uses the Ollama container,
-    # `dev`/`prod` use Amazon Bedrock. The MCP server MUST use the same
+    # ENV selects the embedding backend: `local` uses the TEI `embeddings`
+    # container, `dev`/`prod` use Amazon Bedrock. The MCP server MUST use the same
     # backend/model so query and document vectors share one space.
     env: Literal["local", "dev", "prod"] = Field(
         default="local",
         description="Deployment environment; drives the default embedding backend.",
     )
-    embedding_provider: Literal["auto", "ollama", "bedrock"] = Field(
+    embedding_provider: Literal["auto", "tei", "bedrock"] = Field(
         default="auto",
         description="Explicit backend override; 'auto' derives it from env.",
     )
 
-    ollama_url: str = Field(
-        default="http://localhost:11434",
-        description="Base URL of the Ollama server serving the embedding model (local backend).",
+    embeddings_url: str = Field(
+        default="http://localhost:8001",
+        description="Base URL of the TEI server serving the embedding model (local backend).",
     )
 
     embedding_model: str = Field(
-        default="nomic-embed-text",
-        description="Ollama model used for embeddings; must produce embedding_dim-sized vectors.",
+        default="nomic-embed-text-v1.5",
+        description="Embedding model label; must produce embedding_dim-sized vectors.",
     )
 
     bedrock_region: str = Field(

@@ -57,11 +57,11 @@ to **AWS via Terraform**.
                               │ (users/auth only)          │ + pgvector   │ embeddings
                               ▼                            ▼              ▼
         ┌───────────────────────────────────────────┐    ┌───────────────────────────┐
-        │     PostgreSQL 16 + pgvector (:5432)       │    │     Ollama (:11434)        │
+        │     PostgreSQL 16 + pgvector (:5432)       │    │  TEI embeddings (:8001)    │
         │  movies: metadata + augmented_text +       │    │  nomic-embed-text 768-dim  │
-        │  vector(768) · HNSW cosine index · users   │    │  (pulled on first start)   │
+        │  vector(768) · HNSW cosine index · users   │    │  (loaded on first start)   │
         └────────────────────▲──────────────────────┘    └────────────▲──────────────┘
-                             │ alembic upgrade head + upsert           │ /api/embed
+                             │ alembic upgrade head + upsert           │ /embed
                     ┌────────┴─────────────────────────────────────────┴────────┐
                     │                      Data Pipeline                          │
                     │   (pipeline/, one-shot) Vega dataset → clean → impute →     │
@@ -141,7 +141,7 @@ git clone <REPO_URL> movie-search-platform && cd movie-search-platform
 # 2. Create your local environment file (git-ignored — never commit it)
 cp .env.example .env            # then edit the REQUIRED secrets (see comments in the file)
 
-# 3. Build & start the whole platform (db, redis, ollama, mcp-server, api, observability)
+# 3. Build & start the whole platform (db, redis, embeddings, mcp-server, api, observability)
 docker compose up --build -d
 
 # 4. The pipeline runs automatically as a one-shot service (migrations + load).
@@ -152,8 +152,9 @@ docker compose run --rm pipeline
 curl http://localhost:8080/health
 ```
 
-On first start the `ollama-pull-models` one-shot pulls the `nomic-embed-text` model before the
-pipeline and MCP server come up (cold start ~1–2 min depending on bandwidth).
+On first start the `embeddings` (TEI) service downloads and loads the `nomic-embed-text-v1.5`
+model before the pipeline and MCP server come up (cold start ~1–2 min depending on bandwidth);
+compose gates both on its `/health` check.
 
 > **Credentials:** all secrets (DB password, Redis password, JWT signing key, Grafana admin
 > password) are read from the git-ignored `.env` file — never hardcoded in code or committed config.
@@ -174,8 +175,7 @@ Local URLs when running via Docker Compose (ports per [docker-compose.yml](docke
 | API — metrics | http://localhost:8080/metrics | Prometheus metrics (OTel exporter) |
 | MCP Server | http://localhost:8000/sse | FastMCP endpoint (SSE) for MCP clients |
 | MCP — health | http://localhost:8000/health | MCP health check |
-| Embedding Service (TEI) | http://localhost:8001 | HuggingFace TEI serving nomic-embed-text-v1.5 (alternative backend) |
-| Ollama | http://localhost:11434 | Primary embedding backend (`nomic-embed-text`, 768-dim) |
+| Embedding Service (TEI) | http://localhost:8001 | HuggingFace TEI serving nomic-embed-text-v1.5, 768-dim — local embedding backend for the pipeline & MCP server |
 | PostgreSQL + pgvector | postgresql://localhost:5432 | Primary datastore (movies + users) |
 | Redis | redis://localhost:6379 | API query-result cache (password from `.env`) |
 | Prometheus | http://localhost:9090 | Metrics collection |
@@ -207,8 +207,8 @@ and prepares it for vector search through modular stages:
 3. **Augment** ([augmentation.py](pipeline/src/pipeline/augmentation.py)) — build the embedding text
    (see [Embedding Strategy](#7-embedding-strategy)) and derive **`budget_tier`**, **`decade`** and
    **`blockbuster_flag`**.
-4. **Embed** ([embedding.py](pipeline/src/pipeline/embedding.py)) — call **Ollama**
-   (`nomic-embed-text`, 768-dim) over the network in configurable batches.
+4. **Embed** ([embedding.py](pipeline/src/pipeline/embedding.py)) — call the **TEI embeddings
+   service** (`nomic-embed-text-v1.5`, 768-dim) over the network in configurable batches.
 5. **Load** ([loader.py](pipeline/src/pipeline/loader.py)) — **idempotent upsert** into pgvector:
    movie IDs are deterministic (derived from title + release date), so re-running updates in place
    and never creates duplicates.
@@ -222,13 +222,13 @@ The combined cleaning + imputation report is written to **stdout and
 # Full run (idempotent — re-running does not create duplicates)
 docker compose run --rm pipeline
 
-# Locally with uv (requires postgres + ollama reachable via env vars)
+# Locally with uv (requires postgres + the embeddings service reachable via env vars)
 cd pipeline && uv sync && uv run alembic upgrade head && uv run python src/main.py
 ```
 
 Configuration is typed settings bound from environment variables — see
 [pipeline/src/pipeline/settings.py](pipeline/src/pipeline/settings.py) and
-[.env.example](.env.example): `DATABASE_URL`, `OLLAMA_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`,
+[.env.example](.env.example): `DATABASE_URL`, `EMBEDDINGS_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIM`,
 `BATCH_SIZE` (`PIPELINE_BATCH_SIZE` in compose), `PIPELINE_VERSION`, `LOG_LEVEL`.
 
 ### How to verify
@@ -291,37 +291,27 @@ extension, and the API's `users` table.
 
 ### Model choice & rationale
 
-- **Model:** **`nomic-embed-text`** (nomic-embed-text-v1.5), **768 dimensions**, served by
-  **Ollama** in its own container — no in-process model download and no paid/hosted API. A one-shot
-  `ollama-pull-models` compose service pre-pulls the model before dependents start.
+- **Model:** **`nomic-embed-text-v1.5`**, **768 dimensions**, served by **HuggingFace Text
+  Embeddings Inference (TEI)** in its own container — no in-process model download and no
+  paid/hosted API. TEI downloads and loads the model once on first start, then exposes it over HTTP.
 - **Why:** strong retrieval quality for its size, fully open and locally runnable, and long context
   that comfortably fits the augmented movie text. It keeps all data in-house.
 - **Dimensionality:** **768**. The pgvector column is declared `vector(768)` and `EMBEDDING_DIM=768`
   in [.env.example](.env.example) — the column and model **must** agree or loads fail.
-- The compose file also carries a **HuggingFace Text Embeddings Inference (TEI)** service on `:8001`
-  serving the same model as an alternative HTTP backend. The API itself never embeds — its search
-  queries are embedded by the MCP server.
+- The API itself never embeds — its search queries are embedded by the MCP server.
 
-### How the embedding containers are wired into Docker Compose
+### How the embedding container is wired into Docker Compose
 
 ```yaml
-ollama:                    # primary backend — pipeline & MCP server embed via http://ollama:11434
-  image: ollama/ollama:latest
-  ports: ["11434:11434"]
-  volumes: [ollama_data:/root/.ollama]
-
-ollama-pull-models:        # one-shot: `ollama pull nomic-embed-text` before dependents start
-  image: ollama/ollama:latest
-  depends_on: { ollama: { condition: service_healthy } }
-
-embeddings:                # alternative backend (TEI) serving the same model on :8001
+embeddings:                # local backend — pipeline & MCP server embed via http://embeddings:8001
   image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
   command: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--port", "8001"]
+  healthcheck: ...         # /health goes healthy once the model is loaded
 ```
 
 Both the **pipeline** (document embedding) and the **MCP server** (query embedding) point at
-`http://ollama:11434` via `OLLAMA_URL` with the same `EMBEDDING_MODEL`, so document and query
-vectors always come from the identical model.
+`http://embeddings:8001` via `EMBEDDINGS_URL` with the same `EMBEDDING_MODEL`, and each gates on the
+service's `/health` check, so document and query vectors always come from the identical model.
 
 ### How the embedding text is constructed
 
@@ -347,7 +337,7 @@ Budget tier: {budget_tier}. A blockbuster with high budget and high worldwide gr
 consumable by any MCP-compatible client. ✅ **Implemented:** transport is **SSE** by default
 (`MCP_TRANSPORT=sse`; `streamable-http` supported for production, `stdio` via
 `python -m server.main`), with an **asyncpg** connection pool to pgvector
-([db.py](mcp-server/src/server/db.py)), Ollama query embeddings
+([db.py](mcp-server/src/server/db.py)), TEI query embeddings
 ([embeddings.py](mcp-server/src/server/embeddings.py)), Pydantic models, JSON structured logging
 with per-request IDs and tool timings, and a `GET /health` endpoint. In Docker it runs under
 uvicorn via the ASGI factory ([asgi.py](mcp-server/src/server/asgi.py)).
@@ -544,9 +534,9 @@ durations).
 
 **Location:** [terraform/](terraform/) — ✅ **implemented** (see the detailed
 [terraform/README.md](terraform/README.md)). Target: **AWS ECS Fargate** — the **.NET API** and
-**MCP server** each autoscale between **1 and 2 tasks** (CPU target tracking), with an internal
-**Ollama** service (EFS model cache) for query embeddings and the **pipeline** as a one-off ECS
-task. Backed by **RDS PostgreSQL 16 (pgvector)** and **ElastiCache Redis** in private subnets,
+**MCP server** each autoscale between **1 and 2 tasks** (CPU target tracking), with query and
+document embeddings served by **Amazon Bedrock** (no in-cluster inference) and the **pipeline** as
+a one-off ECS task. Backed by **RDS PostgreSQL 16 (pgvector)** and **ElastiCache Redis** in private subnets,
 images in **ECR** (scan-on-push), a public **ALB** (HTTP now; supply `acm_certificate_arn` to turn
 on HTTPS + redirect), and CloudWatch alarms → SNS.
 
@@ -581,7 +571,7 @@ and push to master:
 
 - **pipeline** (pytest) — cleaning (date quirks, impossible-value nulling, dedup), imputation
   (genre-median runtimes, real categories), augmentation (budget tiers, embedding text),
-  deterministic loader ids, and the Ollama client (retries, dimension guard) via mock transports.
+  deterministic loader ids, and the TEI client (retries, dimension guard) via mock transports.
 - **mcp-server** (pytest) — all six tools exercised end to end through FastMCP's **in-memory MCP
   client** (schemas, structured output, and error mapping included) against fake db/embeddings
   backends, plus the `/health` and `/metrics` HTTP routes.
@@ -625,10 +615,11 @@ a manual approval on the `production` GitHub environment.
   should be shepherded, and the deploy role's IAM policy reviewed by Security first.
 - No exported [openapi.json](openapi.json); the OpenAPI spec is served only
   in the Development environment.
-- Two embedding backends (Ollama + TEI) are both in compose; only Ollama is used (pipeline + MCP
-  server) — the TEI service could be dropped. The AWS stack deploys Ollama only.
-- Ollama pulls model weights on first start (cold start ~1–2 min locally; on AWS the EFS cache
-  makes it a one-time cost); healthchecks account for this.
+- Locally, the pipeline and MCP server both embed via the single **TEI** `embeddings` service
+  (`nomic-embed-text-v1.5`, 768-dim); the AWS stack swaps this for **Amazon Bedrock** (`ENV`
+  drives dev/prod → Bedrock), so there is no in-cluster inference in the cloud.
+- TEI downloads model weights on first start (cold start ~1–2 min locally, cached in the
+  `model-cache` volume thereafter); healthchecks gate dependents until the model is loaded.
 
 **Future improvements**
 

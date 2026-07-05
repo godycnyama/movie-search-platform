@@ -1,4 +1,4 @@
-# Data pipeline — clean, impute, augment, embed (Ollama), load (pgvector).
+# Data pipeline — clean, impute, augment, embed (TEI), load (pgvector).
 # Runs once and exits (compose `pipeline` service / ECS one-off task).
 #
 # Build context is the REPOSITORY ROOT (not pipeline/) so the Alembic versions

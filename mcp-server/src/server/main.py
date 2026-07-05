@@ -3,7 +3,7 @@
 FastMCP server exposing the five semantic-search tools over SSE locally
 (transport configurable for production via MCP_TRANSPORT). Includes a
 GET /health endpoint reporting per-dependency status, structured JSON logging
-with request tracing, an asyncpg pool to pgvector, and Ollama-backed query
+with request tracing, an asyncpg pool to pgvector, and TEI-backed query
 embeddings — all configured through pydantic-settings (src/config.py).
 """
 

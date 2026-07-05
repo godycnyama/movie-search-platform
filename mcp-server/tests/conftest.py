@@ -2,7 +2,7 @@
 
 Tools are exercised end to end through FastMCP's in-memory client transport, so
 schemas, validation, structured output and error mapping behave exactly as they
-do over SSE/streamable-http — only postgres and Ollama are replaced.
+do over SSE/streamable-http — only postgres and the embeddings service are replaced.
 """
 
 import uuid
@@ -85,7 +85,7 @@ class FakeDatabase:
 
 
 class FakeEmbeddings:
-    """Deterministic stand-in for the Ollama query-embedding client."""
+    """Deterministic stand-in for the TEI query-embedding client."""
 
     def __init__(self):
         self.embedded: list[str] = []

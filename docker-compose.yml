@@ -10,7 +10,6 @@
 #   postgres     5432   PostgreSQL 16 + pgvector
 #   redis        6379   Redis 7 cache (API query results)
 #   embeddings   8001   Embedding model server (nomic-embed-text-v1.5, 768-dim)
-#   ollama      11434   Ollama model server (alt. embedding backend + pulled models)
 #   pipeline      —     Data pipeline (runs once and exits)
 #   mcp-server   8000   Python FastMCP server
 #   api          8080   .NET 10 Web API (public facing)
@@ -78,23 +77,44 @@ services:
       start_period: 10s
     networks: [movie-net]
     restart: unless-stopped
-
+  
+  fix-embeddings-config:
+    image: alpine:3.20
+    volumes:
+      - model-cache:/data
+    entrypoint: ["sh", "-c"]
+    command:
+      - |
+        apk add --no-cache jq >/dev/null
+        f=$(find /data -iname config.json -path '*nomic*' 2>/dev/null)
+        if [ -n "$$f" ]; then
+          jq '.' "$$f" > /tmp/fixed.json && cp /tmp/fixed.json "$$f"
+          echo "Patched $$f"
+        else
+          echo "No cached config.json found yet — nothing to patch"
+        fi
   # ---------------------------------------------------------------------------
   # Embedding model server — runs as its own container (no in-process download).
-  # Suggested: nomic-embed-text-v1.5 (768 dimensions) served over HTTP.
+  # nomic-embed-text-v1.5 (768 dimensions) served over HTTP. This is the local
+  # embedding backend for BOTH the pipeline (document embeddings) and the MCP
+  # server (query embeddings) — they call it at http://embeddings:8001/embed.
   #
   # NOTE: `ai/nomic-embed-text-v1.5` (Docker Model Runner) is the spec's suggestion.
-  # For a self-contained OpenAI-compatible HTTP endpoint that works out of the box,
-  # HuggingFace Text Embeddings Inference (TEI) is used below serving the same model.
-  # Swap the image/command if you prefer Docker Model Runner or Ollama — keep 768-dim.
+  # For a self-contained HTTP endpoint that works out of the box, HuggingFace Text
+  # Embeddings Inference (TEI) is used below serving the same model. Swap the
+  # image/command if you prefer Docker Model Runner or Ollama — keep 768-dim.
   # ---------------------------------------------------------------------------
   embeddings:
-    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
+    image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
     container_name: msp-embeddings
+    depends_on:
+      fix-embeddings-config:
+        condition: service_completed_successfully
+        
     command: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--port", "8001"]
     environment:
       # HF_TOKEN is optional for public models; supply via .env only if needed.
-      HF_TOKEN: ${HF_TOKEN:-}
+      HF_TOKEN: ${HF_TOKEN}
     ports:
       - "${EMBEDDINGS_PORT:-8001}:8001"
     volumes:
@@ -110,64 +130,21 @@ services:
     restart: unless-stopped
 
   # ---------------------------------------------------------------------------
-  # Ollama — local model server (alternative embedding backend to TEI above).
-  # ollama-pull-models runs once after it to pre-pull the embedding models.
-  # ---------------------------------------------------------------------------
-  ollama:
-    image: ollama/ollama:latest
-    container_name: ollama
-    ports:
-      - "11434:11434"
-    volumes:
-      - ollama_data:/root/.ollama
-    healthcheck:
-      test: ["CMD", "ollama", "list"]
-      interval: 10s
-      timeout: 5s
-      retries: 10
-      start_period: 15s
-    networks: [movie-net]
-    restart: unless-stopped
-
-  ollama-pull-models:
-    image: ollama/ollama:latest
-    container_name: ollama-pull-models
-    environment:
-      # `ollama pull` talks to the ollama service, not this container.
-      OLLAMA_HOST: http://ollama:11434
-    volumes:
-      - ollama_data:/root/.ollama
-    depends_on:
-      ollama:
-        condition: service_healthy
-    networks: [movie-net]
-    restart: "no"
-    entrypoint: >
-      sh -c "
-      echo 'Waiting for Ollama server to start...' &&
-      sleep 5 &&
-      echo 'Pulling nomic-embed-text...' &&
-      ollama pull nomic-embed-text &&
-      echo 'Embedding model successfully pulled!'"
-
-  # ---------------------------------------------------------------------------
   # Data pipeline (Part 1) — clean, impute, augment, embed, load. Runs and exits.
   #   docker compose run --rm pipeline
   # Idempotent: re-running upserts and does not create duplicates.
   # ---------------------------------------------------------------------------
   pipeline:
     build:
-      # Repo-root context so database/migrations can be baked into the image
-      # (the same image runs on ECS Fargate, where nothing can be mounted).
       context: .
       dockerfile: pipeline/Dockerfile
     container_name: msp-pipeline
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies-dev}
-      # local -> Ollama container (dev/prod use Bedrock; see pipeline/embedding.py).
+      # local -> TEI embeddings container (dev/prod use Bedrock; see pipeline/embedding.py).
       ENV: ${ENV:-local}
-      OLLAMA_URL: http://ollama:11434
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDINGS_URL: http://embeddings:8001
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
       BATCH_SIZE: ${PIPELINE_BATCH_SIZE:-64}
       PIPELINE_VERSION: ${PIPELINE_VERSION:-0.1.0}
@@ -181,16 +158,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
+      # The embedding model must be loaded before the pipeline can embed.
+      embeddings:
         condition: service_healthy
-      # The embedding model must be pulled before the pipeline can embed.
-      ollama-pull-models:
-        condition: service_completed_successfully
     networks: [movie-net]
     restart: "no"
 
   # ---------------------------------------------------------------------------
-  # Python MCP server (Part 3) — FastMCP semantic-search tools over SSE.
+  # Python MCP server — FastMCP semantic-search tools over SSE.
   # ---------------------------------------------------------------------------
   mcp-server:
     build:
@@ -198,10 +173,10 @@ services:
     container_name: msp-mcp-server
     environment:
       DATABASE_URL: postgresql://${POSTGRES_USER}:${POSTGRES_PASSWORD}@postgres:5432/${POSTGRES_DB:-movies-dev}
-      # local -> Ollama container (dev/prod use Bedrock; see server/embeddings.py).
+      # local -> TEI embeddings container (dev/prod use Bedrock; see server/embeddings.py).
       ENV: ${ENV:-local}
-      OLLAMA_URL: http://ollama:11434
-      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-embed-text}
+      EMBEDDINGS_URL: http://embeddings:8001
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-nomic-ai/nomic-embed-text-v1.5}
       EMBEDDING_DIM: ${EMBEDDING_DIM:-768}
       MCP_HOST: 0.0.0.0
       MCP_PORT: "8000"
@@ -220,21 +195,14 @@ services:
     depends_on:
       postgres:
         condition: service_healthy
-      ollama:
-        condition: service_healthy
       # Query embeddings need the same model the pipeline loaded with.
-      ollama-pull-models:
-        condition: service_completed_successfully
+      embeddings:
+        condition: service_healthy
       pipeline:
         condition: service_completed_successfully
     networks: [movie-net]
     restart: unless-stopped
 
-  # ---------------------------------------------------------------------------
-  # .NET 10 Web API (Part 4) — public facing, JWT auth, OpenAPI, observability.
-  # All movie reads go through the MCP server (embedding + vector search happen
-  # there); Postgres is only accessed directly for the API-owned users table.
-  # ---------------------------------------------------------------------------
   api:
     build:
       context: ./api/MovieSearch   # solution root (Directory.*.props live here)
@@ -359,31 +327,7 @@ services:
       start_period: 20s
     networks: [movie-net]
     restart: unless-stopped
-
-  # ---------------------------------------------------------------------------
-  # Embedding Atlas (BONUS, Part 5) — visual exploration of movie embeddings.
-  # Reads the Atlas export produced by scripts/export_embeddings_atlas.py.
-  # ---------------------------------------------------------------------------
-  atlas:
-    build:
-      context: ./scripts           # requires scripts/Dockerfile serving embedding-atlas
-    container_name: msp-atlas
-    ports:
-      - "${ATLAS_PORT:-7000}:7000"
-    volumes:
-      - ./scripts:/app:ro
-    healthcheck:
-      test: ["CMD-SHELL", "wget -q --spider http://localhost:7000/ || exit 1"]
-      interval: 15s
-      timeout: 5s
-      retries: 10
-      start_period: 30s
-    depends_on:
-      postgres:
-        condition: service_healthy
-    networks: [movie-net]
-    restart: unless-stopped
-    profiles: ["bonus"]            # optional: `docker compose --profile bonus up`
+       # optional: `docker compose --profile bonus up`
 
 networks:
   movie-net:
@@ -392,6 +336,5 @@ networks:
 volumes:
   postgres-data:
   model-cache:
-  ollama_data:
   prometheus-data:
   grafana-data:
