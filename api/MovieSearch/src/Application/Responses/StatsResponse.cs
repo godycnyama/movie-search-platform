@@ -2,9 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Responses;
 
-/// <summary>
-/// Response for <c>GET /api/v1/stats</c> (README §9). Admin-only in production.
-/// </summary>
 public class StatsResponse
 {
     [JsonPropertyName("total_movies")]

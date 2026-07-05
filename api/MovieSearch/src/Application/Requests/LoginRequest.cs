@@ -3,7 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Requests;
 
-/// <summary>Body for <c>POST /api/v1/auth/login</c>.</summary>
 public class LoginRequest
 {
     [Required(AllowEmptyStrings = false, ErrorMessage = "'email' is required.")]

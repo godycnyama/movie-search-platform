@@ -37,7 +37,7 @@ app.UseAuthorization();
 // Rate limiter must run after authentication so the partitioner can read the JWT "sub" claim.
 app.UseRateLimiter();
 
-// Enforce the per-request wall-clock budget (assessment §4.5, default 30s).
+// Enforce the per-request wall-clock budget.
 app.UseRequestTimeouts();
 
 app.MapCarter();
@@ -46,7 +46,7 @@ app.MapCarter();
 // Skipped from rate limiting so scrapers can't be starved by a noisy neighbour.
 app.MapPrometheusScrapingEndpoint().DisableRateLimiting();
 
-// Liveness/readiness probe (README §9; docker-compose healthcheck curls this).
+// Liveness/readiness probe.
 // Emits the HealthResponse contract: overall status + per-dependency status.
 // Skipped from rate limiting/timeouts so probes always get a fast, unmetered answer.
 app.MapHealthChecks("/health", new HealthCheckOptions

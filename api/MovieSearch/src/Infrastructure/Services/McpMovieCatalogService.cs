@@ -1,4 +1,6 @@
 using Application.Services;
+using Domain.Common;
+using Domain.Errors;
 using Infrastructure.Contracts.Mcp;
 using Infrastructure.Settings;
 using Microsoft.Extensions.Logging;
@@ -23,7 +25,7 @@ public sealed class McpMovieCatalogService(
     private readonly SemaphoreSlim _connectLock = new(1, 1);
     private McpClient? _client;
 
-    public async Task<IReadOnlyList<MovieCatalogItem>> SearchAsync(
+    public Task<Result<IReadOnlyList<MovieCatalogItem>>> SearchAsync(
         string query,
         MovieSearchFilters filters,
         int topK,
@@ -39,34 +41,55 @@ public sealed class McpMovieCatalogService(
             ["decade"] = filters.Decade,
         };
 
-        var result = await CallToolAsync("search_movies_by_description", arguments, cancellationToken);
-        EnsureSuccess("search_movies_by_description", result);
-
-        var hits = McpToolResults.Deserialize<List<McpMovieResult>>(result) ?? [];
-        return hits.Select(hit => hit.ToCatalogItem()).ToList();
+        return CallAsync(
+            "search_movies_by_description",
+            arguments,
+            result =>
+            {
+                var hits = McpToolResults.Deserialize<List<McpMovieResult>>(result) ?? [];
+                return Result<IReadOnlyList<MovieCatalogItem>>.Success(hits.Select(hit => hit.ToCatalogItem()).ToList());
+            },
+            MovieErrors.SearchFailed(),
+            cancellationToken);
     }
 
-    public async Task<MovieCatalogItem?> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
+    public Task<Result<MovieCatalogItem>> GetByIdAsync(Guid id, CancellationToken cancellationToken = default)
     {
         var arguments = new Dictionary<string, object?> { ["movie_id"] = id.ToString() };
 
-        var result = await CallToolAsync("get_movie_by_id", arguments, cancellationToken);
-        EnsureSuccess("get_movie_by_id", result);
-
-        return McpToolResults.Deserialize<McpMovieResult>(result)?.ToCatalogItem();
+        return CallAsync(
+            "get_movie_by_id",
+            arguments,
+            result =>
+            {
+                var movie = McpToolResults.Deserialize<McpMovieResult>(result)?.ToCatalogItem();
+                return movie is null
+                    ? Result<MovieCatalogItem>.Failure(MovieErrors.NotFound(id.ToString()))
+                    : Result<MovieCatalogItem>.Success(movie);
+            },
+            MovieErrors.McpServerUnavailable(),
+            cancellationToken);
     }
 
-    public async Task<MovieCatalogItem?> GetByTitleAsync(string title, CancellationToken cancellationToken = default)
+    public Task<Result<MovieCatalogItem>> GetByTitleAsync(string title, CancellationToken cancellationToken = default)
     {
         var arguments = new Dictionary<string, object?> { ["title"] = title };
 
-        var result = await CallToolAsync("get_movie_by_title", arguments, cancellationToken);
-        EnsureSuccess("get_movie_by_title", result);
-
-        return McpToolResults.Deserialize<McpMovieResult>(result)?.ToCatalogItem();
+        return CallAsync(
+            "get_movie_by_title",
+            arguments,
+            result =>
+            {
+                var movie = McpToolResults.Deserialize<McpMovieResult>(result)?.ToCatalogItem();
+                return movie is null
+                    ? Result<MovieCatalogItem>.Failure(MovieErrors.TitleNotFound(title))
+                    : Result<MovieCatalogItem>.Success(movie);
+            },
+            MovieErrors.McpServerUnavailable(),
+            cancellationToken);
     }
 
-    public async Task<IReadOnlyList<MovieCatalogItem>?> GetSimilarAsync(
+    public async Task<Result<IReadOnlyList<MovieCatalogItem>>> GetSimilarAsync(
         Guid id,
         int topK,
         CancellationToken cancellationToken = default)
@@ -77,40 +100,57 @@ public sealed class McpMovieCatalogService(
             ["top_k"] = topK,
         };
 
-        var result = await CallToolAsync("get_similar_movies", arguments, cancellationToken);
-        if (result.IsError == true)
+        try
         {
-            // The tool signals an unknown movie with a "does not exist" error; the
-            // endpoint maps the null to a 404. Anything else is a real failure.
-            var message = McpToolResults.ErrorMessage(result);
-            if (message.Contains("does not exist", StringComparison.OrdinalIgnoreCase))
+            var result = await CallToolAsync("get_similar_movies", arguments, cancellationToken);
+            if (result.IsError == true)
             {
-                return null;
+                // The tool signals an unknown movie with a "does not exist" error
+                // (mapped to a NotFound result); anything else is a real failure.
+                var message = McpToolResults.ErrorMessage(result);
+                if (message.Contains("does not exist", StringComparison.OrdinalIgnoreCase))
+                {
+                    return Result<IReadOnlyList<MovieCatalogItem>>.Failure(MovieErrors.NotFound(id.ToString()));
+                }
+
+                logger.LogError("MCP tool 'get_similar_movies' failed: {Message}", message);
+                return Result<IReadOnlyList<MovieCatalogItem>>.Failure(MovieErrors.McpServerUnavailable());
             }
 
-            throw ToolFailure("get_similar_movies", message);
+            var hits = McpToolResults.Deserialize<List<McpMovieResult>>(result) ?? [];
+            return Result<IReadOnlyList<MovieCatalogItem>>.Success(hits.Select(hit => hit.ToCatalogItem()).ToList());
         }
-
-        var hits = McpToolResults.Deserialize<List<McpMovieResult>>(result) ?? [];
-        return hits.Select(hit => hit.ToCatalogItem()).ToList();
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "MCP tool 'get_similar_movies' threw");
+            return Result<IReadOnlyList<MovieCatalogItem>>.Failure(MovieErrors.McpServerUnavailable());
+        }
     }
 
-    public async Task<IReadOnlyList<string>> GetGenresAsync(CancellationToken cancellationToken = default)
+    public Task<Result<IReadOnlyList<string>>> GetGenresAsync(CancellationToken cancellationToken = default)
     {
-        var result = await CallToolAsync("list_genres", arguments: [], cancellationToken);
-        EnsureSuccess("list_genres", result);
-
-        return McpToolResults.Deserialize<List<string>>(result) ?? [];
+        return CallAsync(
+            "list_genres",
+            arguments: [],
+            result => Result<IReadOnlyList<string>>.Success(McpToolResults.Deserialize<List<string>>(result) ?? []),
+            MovieErrors.McpServerUnavailable(),
+            cancellationToken);
     }
 
-    public async Task<MovieStatistics> GetStatisticsAsync(CancellationToken cancellationToken = default)
+    public Task<Result<MovieStatistics>> GetStatisticsAsync(CancellationToken cancellationToken = default)
     {
-        var result = await CallToolAsync("get_dataset_stats", arguments: [], cancellationToken);
-        EnsureSuccess("get_dataset_stats", result);
-
-        var stats = McpToolResults.Deserialize<McpDatasetStats>(result)
-            ?? throw ToolFailure("get_dataset_stats", "empty result payload");
-        return stats.ToStatistics();
+        return CallAsync(
+            "get_dataset_stats",
+            arguments: [],
+            result =>
+            {
+                var stats = McpToolResults.Deserialize<McpDatasetStats>(result);
+                return stats is null
+                    ? Result<MovieStatistics>.Failure(MovieErrors.StatsUnavailable())
+                    : Result<MovieStatistics>.Success(stats.ToStatistics());
+            },
+            MovieErrors.StatsUnavailable(),
+            cancellationToken);
     }
 
     /// <summary>Round-trips an MCP ping; used by the API's /health endpoint.</summary>
@@ -219,14 +259,33 @@ public sealed class McpMovieCatalogService(
         }
     }
 
-    private static void EnsureSuccess(string tool, CallToolResult result)
+    /// <summary>
+    /// Calls a tool and projects a successful result via <paramref name="onSuccess"/>.
+    /// A tool-level error maps to <paramref name="downstreamError"/>; a transport
+    /// exception maps to <see cref="MovieErrors.McpServerUnavailable"/>. Never throws.
+    /// </summary>
+    private async Task<Result<T>> CallAsync<T>(
+        string tool,
+        Dictionary<string, object?> arguments,
+        Func<CallToolResult, Result<T>> onSuccess,
+        Error downstreamError,
+        CancellationToken cancellationToken)
     {
-        if (result.IsError == true)
+        try
         {
-            throw ToolFailure(tool, McpToolResults.ErrorMessage(result));
+            var result = await CallToolAsync(tool, arguments, cancellationToken);
+            if (result.IsError == true)
+            {
+                logger.LogError("MCP tool '{Tool}' failed: {Message}", tool, McpToolResults.ErrorMessage(result));
+                return Result<T>.Failure(downstreamError);
+            }
+
+            return onSuccess(result);
+        }
+        catch (Exception exception)
+        {
+            logger.LogError(exception, "MCP tool '{Tool}' threw", tool);
+            return Result<T>.Failure(MovieErrors.McpServerUnavailable());
         }
     }
-
-    private static InvalidOperationException ToolFailure(string tool, string message) =>
-        new($"MCP tool '{tool}' failed: {message}");
 }

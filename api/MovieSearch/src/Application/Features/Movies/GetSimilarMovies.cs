@@ -4,6 +4,7 @@ using Application.Requests;
 using Application.Responses;
 using Application.Services;
 using Carter;
+using Domain.Common;
 using Domain.Errors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -14,13 +15,11 @@ using Wolverine;
 
 namespace Application.Features.Movies;
 
-/// <summary>Nearest neighbours of a movie (README §9, <c>GET /api/v1/movies/{id}/similar</c>).</summary>
 public sealed record GetSimilarMoviesQuery(Guid Id, int TopK);
 
 public static class GetSimilarMoviesHandler
 {
-    /// <summary>Returns <c>null</c> when the source movie does not exist (the endpoint maps that to 404).</summary>
-    public static async Task<SimilarMoviesResponse?> Handle(
+    public static async Task<Result<SimilarMoviesResponse>> Handle(
         GetSimilarMoviesQuery query,
         IMovieCatalogService movieCatalog,
         ICacheService cacheService,
@@ -29,30 +28,34 @@ public static class GetSimilarMoviesHandler
     {
         try
         {
-            // A null (unknown movie) result is never cached, so a movie added later is picked up immediately.
-            return await cacheService.GetOrCreateAsync(
-                CacheKeys.Similar(query.Id, query.TopK),
-                async ct =>
-                {
-                    var hits = await movieCatalog.GetSimilarAsync(query.Id, query.TopK, ct);
-                    if (hits is null)
-                    {
-                        return null;
-                    }
+            var cacheKey = CacheKeys.Similar(query.Id, query.TopK);
 
-                    return new SimilarMoviesResponse
-                    {
-                        SourceId = query.Id.ToString(),
-                        Results = hits.Select(hit => hit.ToSimilarMovieDto()).ToList(),
-                    };
-                },
-                CacheKeys.SimilarTtl,
-                cancellationToken);
+            var cached = await cacheService.GetAsync<SimilarMoviesResponse>(cacheKey, cancellationToken);
+            if (cached is not null)
+            {
+                return Result<SimilarMoviesResponse>.Success(cached);
+            }
+
+            var similar = await movieCatalog.GetSimilarAsync(query.Id, query.TopK, cancellationToken);
+            if (!similar.IsSuccess)
+            {
+                // An unknown movie (or a downstream failure) is never cached.
+                return Result<SimilarMoviesResponse>.Failure(similar.Error!);
+            }
+
+            var response = new SimilarMoviesResponse
+            {
+                SourceId = query.Id.ToString(),
+                Results = similar.Value!.Select(hit => hit.ToSimilarMovieDto()).ToList(),
+            };
+
+            await cacheService.SetAsync(cacheKey, response, CacheKeys.SimilarTtl, cancellationToken);
+            return Result<SimilarMoviesResponse>.Success(response);
         }
         catch (Exception exception)
         {
             logger.LogError(exception, "Failed to fetch similar movies for {MovieId} (top_k {TopK})", query.Id, query.TopK);
-            throw;
+            return Result<SimilarMoviesResponse>.Failure(Error.Unexpected);
         }
     }
 }
@@ -78,18 +81,26 @@ public sealed class GetSimilarMoviesEndpoint : ICarterModule
                     return Results.ValidationProblem(errors);
                 }
 
-                var response = await bus.InvokeAsync<SimilarMoviesResponse?>(
+                var result = await bus.InvokeAsync<Result<SimilarMoviesResponse>>(
                     new GetSimilarMoviesQuery(id, request.TopK), cancellationToken);
 
-                return response is not null
-                    ? Results.Ok(response)
-                    : MovieErrors.NotFound(id.ToString()).ToProblem(StatusCodes.Status404NotFound);
+                if (result.IsSuccess)
+                {
+                    return Results.Ok(result.Value);
+                }
+
+                var statusCode = result.Error!.Code == MovieErrors.NotFound(id.ToString()).Code
+                    ? StatusCodes.Status404NotFound
+                    : StatusCodes.Status500InternalServerError;
+
+                return result.Error!.ToProblem(statusCode);
             })
            .RequireAuthorization()
            .WithName("GetSimilarMovies")
            .WithTags("Movies")
            .Produces<SimilarMoviesResponse>()
            .ProducesValidationProblem()
-           .ProducesProblem(StatusCodes.Status404NotFound);
+           .ProducesProblem(StatusCodes.Status404NotFound)
+           .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 }

@@ -1,4 +1,3 @@
-using System.Security.Claims;
 using Application.Common;
 using Application.Repositories;
 using Application.Requests;
@@ -11,14 +10,11 @@ using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Routing;
 using Microsoft.Extensions.Logging;
+using System.Security.Claims;
 using Wolverine;
 
 namespace Application.Features.Auth;
 
-/// <summary>
-/// Changes the authenticated user's password (<c>POST /api/v1/auth/change-password</c>).
-/// The user id comes from the bearer token's <c>sub</c> claim.
-/// </summary>
 public sealed record ChangePasswordCommand(Guid UserId, string CurrentPassword, string NewPassword);
 
 public static class ChangePasswordHandler
@@ -53,7 +49,7 @@ public static class ChangePasswordHandler
         catch (Exception exception)
         {
             logger.LogError(exception, "Password change failed for user {UserId}", command.UserId);
-            throw;
+            return Result<MessageResponse>.Failure(Error.Unexpected);
         }
     }
 }
@@ -88,7 +84,12 @@ public sealed class ChangePasswordEndpoint : ICarterModule
                     return Results.Ok(result.Value);
                 }
 
-                return result.Error!.Code == UserErrors.PasswordIncorrect().Code
+                if (result.Error! == Error.Unexpected)
+                {
+                    return result.Error.ToProblem(StatusCodes.Status500InternalServerError);
+                }
+
+                return result.Error.Code == UserErrors.PasswordIncorrect().Code
                     ? result.Error.ToProblem(StatusCodes.Status400BadRequest)
                     : result.Error.ToProblem(StatusCodes.Status404NotFound);
             })
@@ -98,6 +99,7 @@ public sealed class ChangePasswordEndpoint : ICarterModule
            .Produces<MessageResponse>()
            .ProducesValidationProblem()
            .ProducesProblem(StatusCodes.Status400BadRequest)
-           .ProducesProblem(StatusCodes.Status401Unauthorized);
+           .ProducesProblem(StatusCodes.Status401Unauthorized)
+           .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 }

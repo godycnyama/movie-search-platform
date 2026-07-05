@@ -9,15 +9,9 @@ namespace Application.Extensions;
 
 public static class ApplicationExtensions
 {
-    /// <summary>
-    /// Wires up everything the Application layer contributes to the host: Wolverine as
-    /// the in-process CQRS mediator, Carter for the endpoint slices under Features/,
-    /// and URL-segment API versioning (README §9, <c>/api/v1/...</c>).
-    /// </summary>
     public static WebApplicationBuilder AddApplicationServices(this WebApplicationBuilder builder)
     {
-        // Handlers live in this assembly, not the entry assembly, so Wolverine's
-        // discovery has to include it explicitly.
+        // Register Wolverine handlers
         builder.Host.UseWolverine(options =>
             options.Discovery.IncludeAssembly(typeof(ApplicationExtensions).Assembly));
 

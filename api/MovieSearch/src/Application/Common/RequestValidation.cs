@@ -2,11 +2,6 @@ using System.ComponentModel.DataAnnotations;
 
 namespace Application.Common;
 
-/// <summary>
-/// Runs the DataAnnotations declared on the request DTOs (Application/Requests) and
-/// shapes failures for <c>Results.ValidationProblem</c>, so endpoints return RFC 9457
-/// validation problem details with the field-level messages defined on the contracts.
-/// </summary>
 internal static class RequestValidation
 {
     public static bool HasErrors(object request, out Dictionary<string, string[]> errors)

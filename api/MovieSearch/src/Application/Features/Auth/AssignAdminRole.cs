@@ -14,11 +14,6 @@ using Wolverine;
 
 namespace Application.Features.Auth;
 
-/// <summary>
-/// Promotes an existing user to the <see cref="UserRoles.Admin"/> role
-/// (<c>POST /api/v1/auth/assignadminrole</c>). Admin-only; idempotent for
-/// users who already hold the role.
-/// </summary>
 public sealed record AssignAdminRoleCommand(string Email);
 
 public static class AssignAdminRoleHandler
@@ -55,7 +50,7 @@ public static class AssignAdminRoleHandler
         catch (Exception exception)
         {
             logger.LogError(exception, "Admin role assignment failed for {Email}", command.Email);
-            throw;
+            return Result<MessageResponse>.Failure(Error.Unexpected);
         }
     }
 }
@@ -78,9 +73,16 @@ public sealed class AssignAdminRoleEndpoint : ICarterModule
                     new AssignAdminRoleCommand(request.Email),
                     cancellationToken);
 
-                return result.IsSuccess
-                    ? Results.Ok(result.Value)
-                    : result.Error!.ToProblem(StatusCodes.Status404NotFound);
+                if (result.IsSuccess)
+                {
+                    return Results.Ok(result.Value);
+                }
+
+                var statusCode = result.Error! == Error.Unexpected
+                    ? StatusCodes.Status500InternalServerError
+                    : StatusCodes.Status404NotFound;
+
+                return result.Error!.ToProblem(statusCode);
             })
            .RequireAuthorization(AuthPolicies.AdminOnly)
            .WithName("AssignAdminRole")
@@ -89,6 +91,7 @@ public sealed class AssignAdminRoleEndpoint : ICarterModule
            .ProducesValidationProblem()
            .ProducesProblem(StatusCodes.Status401Unauthorized)
            .ProducesProblem(StatusCodes.Status403Forbidden)
-           .ProducesProblem(StatusCodes.Status404NotFound);
+           .ProducesProblem(StatusCodes.Status404NotFound)
+           .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 }

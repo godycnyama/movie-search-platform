@@ -13,14 +13,9 @@ public static class McpToolResults
 {
     private static readonly JsonSerializerOptions SerializerOptions = new(JsonSerializerDefaults.Web);
 
-    /// <summary>
-    /// Deserializes the tool's payload, or <c>null</c> when the tool returned
-    /// nothing (e.g. a <c>MovieResult | None</c> tool that found no match).
-    /// </summary>
     public static T? Deserialize<T>(CallToolResult result) where T : class =>
         Payload(result) is { } payload ? payload.Deserialize<T>(SerializerOptions) : null;
 
-    /// <summary>The error text of a failed (<c>isError</c>) tool call.</summary>
     public static string ErrorMessage(CallToolResult result) =>
         FirstText(result) is { Length: > 0 } text
             ? text

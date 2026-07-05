@@ -15,6 +15,5 @@ public sealed record MovieSearchFilters(
     string? MpaaRating = null,
     int? Decade = null)
 {
-    /// <summary>An unfiltered search.</summary>
     public static readonly MovieSearchFilters None = new();
 }

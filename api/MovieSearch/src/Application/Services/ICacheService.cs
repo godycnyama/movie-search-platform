@@ -10,10 +10,8 @@ public interface ICacheService
     /// <summary>Fetches a cached value, or <c>default</c> on a miss (or cache outage).</summary>
     Task<T?> GetAsync<T>(string key, CancellationToken cancellationToken = default);
 
-    /// <summary>Stores a value with the given time-to-live (implementation default when omitted).</summary>
     Task SetAsync<T>(string key, T value, TimeSpan? timeToLive = null, CancellationToken cancellationToken = default);
 
-    /// <summary>Removes a cached value; no-op when the key does not exist.</summary>
     Task RemoveAsync(string key, CancellationToken cancellationToken = default);
 
     /// <summary>

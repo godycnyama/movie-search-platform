@@ -2,11 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Contracts.Common;
 
-/// <summary>
-/// A single ranked hit in a semantic search result set.
-/// Field selection matches the example payload in README §9
-/// (<c>GET /api/v1/movies/search</c>).
-/// </summary>
 public class MovieSearchResultDto
 {
     [JsonPropertyName("id")]

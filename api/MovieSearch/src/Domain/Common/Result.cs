@@ -2,11 +2,6 @@ using Domain.Errors;
 
 namespace Domain.Common;
 
-/// <summary>
-/// Outcome of an operation that can fail for a domain reason: either a value or an
-/// <see cref="Errors.Error"/>, never both. Lets handlers report *why* something failed
-/// without exceptions, so endpoints can map each error code to the right status.
-/// </summary>
 public sealed record Result<T>
 {
     public T? Value { get; }

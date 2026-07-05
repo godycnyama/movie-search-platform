@@ -18,7 +18,6 @@ public interface IUserRepository
     /// <summary>True if at least one user account exists (used to bootstrap the first admin).</summary>
     Task<bool> AnyAsync(CancellationToken cancellationToken = default);
 
-    /// <summary>Inserts and persists a new user.</summary>
     Task AddAsync(User user, CancellationToken cancellationToken = default);
 
     /// <summary>Persists changes to an existing (tracked or detached) user.</summary>

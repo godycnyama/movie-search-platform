@@ -16,12 +16,9 @@ public class User
     /// <summary>Salted PBKDF2 hash of the password, including its parameters.</summary>
     public required string PasswordHash { get; set; }
 
-    /// <summary>Authorization role (see <c>UserRoles</c>).</summary>
     public string Role { get; set; } = UserRoles.Reader;
 
-    /// <summary>Timestamp the account was created.</summary>
     public DateTimeOffset CreatedAt { get; set; }
 
-    /// <summary>Timestamp the account was last modified (e.g. password change).</summary>
     public DateTimeOffset UpdatedAt { get; set; }
 }

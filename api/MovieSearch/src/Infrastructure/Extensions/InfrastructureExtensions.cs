@@ -57,7 +57,6 @@ public static class InfrastructureExtensions
         return services;
     }
 
-    /// <summary>JWT bearer authentication + role-based authorization policies (README §10).</summary>
     private static IServiceCollection AddAuthServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<JwtSettings>()

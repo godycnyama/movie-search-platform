@@ -3,10 +3,6 @@ using Application.Services;
 
 namespace Infrastructure.Contracts.Mcp;
 
-/// <summary>
-/// Wire shape of the MCP server's <c>DatasetStats</c> model
-/// (<c>mcp-server/src/server/models.py</c>, tool <c>get_dataset_stats</c>).
-/// </summary>
 public class McpDatasetStats
 {
     [JsonPropertyName("total_movies")]

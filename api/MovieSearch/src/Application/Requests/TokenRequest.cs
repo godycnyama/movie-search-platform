@@ -3,9 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Requests;
 
-/// <summary>
-/// Client-credentials payload for <c>POST /auth/token</c>.
-/// </summary>
 public class TokenRequest
 {
     [Required(AllowEmptyStrings = false, ErrorMessage = "'client_id' is required.")]

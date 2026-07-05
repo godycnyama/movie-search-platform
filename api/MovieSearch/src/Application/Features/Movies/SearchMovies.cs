@@ -4,6 +4,8 @@ using Application.Requests;
 using Application.Responses;
 using Application.Services;
 using Carter;
+using Domain.Common;
+using Domain.Errors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.AspNetCore.Mvc;
@@ -13,7 +15,6 @@ using Wolverine;
 
 namespace Application.Features.Movies;
 
-/// <summary>Natural-language semantic search (README §9, <c>GET /api/v1/movies/search</c>).</summary>
 public sealed record SearchMoviesQuery(
     string Q,
     int TopK,
@@ -24,7 +25,7 @@ public sealed record SearchMoviesQuery(
 
 public static class SearchMoviesHandler
 {
-    public static async Task<SearchMoviesResponse> Handle(
+    public static async Task<Result<SearchMoviesResponse>> Handle(
         SearchMoviesQuery query,
         IMovieCatalogService movieCatalog,
         ICacheService cacheService,
@@ -33,28 +34,37 @@ public static class SearchMoviesHandler
     {
         try
         {
-            return await cacheService.GetOrCreateAsync(
-                CacheKeys.Search(query.Q, query.TopK, query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade),
-                async ct =>
-                {
-                    // The MCP server embeds the query and runs the pgvector search.
-                    var filters = new MovieSearchFilters(query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
-                    var hits = await movieCatalog.SearchAsync(query.Q, filters, query.TopK, ct);
+            var cacheKey = CacheKeys.Search(query.Q, query.TopK, query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
 
-                    return new SearchMoviesResponse
-                    {
-                        Query = query.Q,
-                        Count = hits.Count,
-                        Results = hits.Select(hit => hit.ToSearchResultDto()).ToList(),
-                    };
-                },
-                CacheKeys.SearchTtl,
-                cancellationToken);
+            var cached = await cacheService.GetAsync<SearchMoviesResponse>(cacheKey, cancellationToken);
+            if (cached is not null)
+            {
+                return Result<SearchMoviesResponse>.Success(cached);
+            }
+
+            // The MCP server embeds the query and runs the pgvector search.
+            var filters = new MovieSearchFilters(query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
+            var search = await movieCatalog.SearchAsync(query.Q, filters, query.TopK, cancellationToken);
+            if (!search.IsSuccess)
+            {
+                return Result<SearchMoviesResponse>.Failure(search.Error!);
+            }
+
+            var hits = search.Value!;
+            var response = new SearchMoviesResponse
+            {
+                Query = query.Q,
+                Count = hits.Count,
+                Results = hits.Select(hit => hit.ToSearchResultDto()).ToList(),
+            };
+
+            await cacheService.SetAsync(cacheKey, response, CacheKeys.SearchTtl, cancellationToken);
+            return Result<SearchMoviesResponse>.Success(response);
         }
         catch (Exception exception)
         {
             logger.LogError(exception, "Semantic search failed for query '{Query}' (top_k {TopK})", query.Q, query.TopK);
-            throw;
+            return Result<SearchMoviesResponse>.Failure(Error.Unexpected);
         }
     }
 }
@@ -91,16 +101,19 @@ public sealed class SearchMoviesEndpoint : ICarterModule
                     return Results.ValidationProblem(errors);
                 }
 
-                var response = await bus.InvokeAsync<SearchMoviesResponse>(
+                var result = await bus.InvokeAsync<Result<SearchMoviesResponse>>(
                     new SearchMoviesQuery(request.Q, request.TopK, request.Genre, request.MinImdbRating, request.MpaaRating, request.Decade),
                     cancellationToken);
 
-                return Results.Ok(response);
+                return result.IsSuccess
+                    ? Results.Ok(result.Value)
+                    : result.Error!.ToProblem(StatusCodes.Status500InternalServerError);
             })
            .RequireAuthorization()
            .WithName("SearchMovies")
            .WithTags("Movies")
            .Produces<SearchMoviesResponse>()
-           .ProducesValidationProblem();
+           .ProducesValidationProblem()
+           .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 }

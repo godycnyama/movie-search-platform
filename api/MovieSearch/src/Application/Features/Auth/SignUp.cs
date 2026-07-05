@@ -15,11 +15,6 @@ using Wolverine;
 
 namespace Application.Features.Auth;
 
-/// <summary>
-/// Creates an account and returns a bearer token (<c>POST /api/v1/auth/signup</c>).
-/// The very first account is bootstrapped as "admin"; every account after that is "reader"
-/// (further admins are promoted via <c>POST /api/v1/auth/assignadminrole</c>).
-/// </summary>
 public sealed record SignUpCommand(string Email, string Password);
 
 public static class SignUpHandler
@@ -41,7 +36,7 @@ public static class SignUpHandler
                 return Result<TokenResponse>.Failure(UserErrors.EmailTaken(email));
             }
 
-            // Day-zero bootstrap: the first account ever created becomes the admin.
+            // the first account ever created becomes the admin.
             var isFirstUser = !await userRepository.AnyAsync(cancellationToken);
 
             var now = DateTimeOffset.UtcNow;
@@ -63,7 +58,7 @@ public static class SignUpHandler
         catch (Exception exception)
         {
             logger.LogError(exception, "Sign-up failed");
-            throw;
+            return Result<TokenResponse>.Failure(Error.Unexpected);
         }
     }
 }
@@ -85,15 +80,23 @@ public sealed class SignUpEndpoint : ICarterModule
                 var result = await bus.InvokeAsync<Result<TokenResponse>>(
                     new SignUpCommand(request.Email, request.Password), cancellationToken);
 
-                return result.IsSuccess
-                    ? Results.Created((string?)null, result.Value)
-                    : result.Error!.ToProblem(StatusCodes.Status409Conflict);
+                if (result.IsSuccess)
+                {
+                    return Results.Created((string?)null, result.Value);
+                }
+
+                var statusCode = result.Error! == Error.Unexpected
+                    ? StatusCodes.Status500InternalServerError
+                    : StatusCodes.Status409Conflict;
+
+                return result.Error!.ToProblem(statusCode);
             })
            .AllowAnonymous()
            .WithName("SignUp")
            .WithTags("Auth")
            .Produces<TokenResponse>(StatusCodes.Status201Created)
            .ProducesValidationProblem()
-           .ProducesProblem(StatusCodes.Status409Conflict);
+           .ProducesProblem(StatusCodes.Status409Conflict)
+           .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 }

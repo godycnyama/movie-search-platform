@@ -4,10 +4,6 @@ using Microsoft.EntityFrameworkCore.Metadata.Builders;
 
 namespace Infrastructure.Configurations;
 
-/// <summary>
-/// Maps <see cref="User"/> onto the API-owned <c>users</c> table
-/// (created by database/migrations/002_create_users.sql).
-/// </summary>
 public sealed class UserConfiguration : IEntityTypeConfiguration<User>
 {
     public void Configure(EntityTypeBuilder<User> builder)

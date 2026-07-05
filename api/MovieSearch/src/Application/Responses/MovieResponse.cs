@@ -2,12 +2,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Responses;
 
-/// <summary>
-/// Response for <c>GET /api/v1/movies/{id}</c> (README §9). Full movie detail with the
-/// fields exposed to API clients. Note that this is a public-facing projection of
-/// <c>Domain.Entities.Movie</c> — internal audit columns (<c>CreatedAt</c>,
-/// <c>UpdatedAt</c>, <c>PipelineVersion</c>) and the raw <c>Embedding</c> are omitted.
-/// </summary>
 public class MovieResponse
 {
     [JsonPropertyName("id")]
@@ -43,11 +37,9 @@ public class MovieResponse
     [JsonPropertyName("running_time_min")]
     public int? RunningTimeMin { get; set; }
 
-    /// <summary>Bucketised budget (e.g. low/mid/high/blockbuster); null when budget is unknown.</summary>
     [JsonPropertyName("budget_tier")]
     public string? BudgetTier { get; set; }
 
-    /// <summary>Integer decade derived from the release date (e.g. 1990); null when unknown.</summary>
     [JsonPropertyName("decade")]
     public int? Decade { get; set; }
 }

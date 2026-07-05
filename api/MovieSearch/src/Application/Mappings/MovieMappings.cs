@@ -4,7 +4,6 @@ using Application.Services;
 
 namespace Application.Mappings;
 
-/// <summary>Projections from MCP catalogue results onto the public API contracts (README §9).</summary>
 internal static class MovieMappings
 {
     public static MovieResponse ToMovieResponse(this MovieCatalogItem movie) => new()

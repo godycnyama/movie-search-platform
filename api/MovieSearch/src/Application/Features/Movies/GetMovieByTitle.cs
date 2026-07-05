@@ -4,6 +4,7 @@ using Application.Requests;
 using Application.Responses;
 using Application.Services;
 using Carter;
+using Domain.Common;
 using Domain.Errors;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
@@ -14,15 +15,11 @@ using Wolverine;
 
 namespace Application.Features.Movies;
 
-/// <summary>
-/// Full movie detail by exact or fuzzy title match (<c>GET /api/v1/movies/by-title</c>;
-/// MCP tool <c>get_movie_by_title</c>).
-/// </summary>
 public sealed record GetMovieByTitleQuery(string Title);
 
 public static class GetMovieByTitleHandler
 {
-    public static async Task<MovieResponse?> Handle(
+    public static async Task<Result<MovieResponse>> Handle(
         GetMovieByTitleQuery query,
         IMovieCatalogService movieCatalog,
         ICacheService cacheService,
@@ -31,21 +28,29 @@ public static class GetMovieByTitleHandler
     {
         try
         {
-            // A null (no match) result is never cached, so a movie added later is picked up immediately.
-            return await cacheService.GetOrCreateAsync(
-                CacheKeys.MovieByTitle(query.Title),
-                async ct =>
-                {
-                    var movie = await movieCatalog.GetByTitleAsync(query.Title, ct);
-                    return movie?.ToMovieResponse();
-                },
-                CacheKeys.MovieTtl,
-                cancellationToken);
+            var cacheKey = CacheKeys.MovieByTitle(query.Title);
+
+            var cached = await cacheService.GetAsync<MovieResponse>(cacheKey, cancellationToken);
+            if (cached is not null)
+            {
+                return Result<MovieResponse>.Success(cached);
+            }
+
+            var movie = await movieCatalog.GetByTitleAsync(query.Title, cancellationToken);
+            if (!movie.IsSuccess)
+            {
+                // No match (or a downstream failure) is never cached, so a movie added later is picked up immediately.
+                return Result<MovieResponse>.Failure(movie.Error!);
+            }
+
+            var response = movie.Value!.ToMovieResponse();
+            await cacheService.SetAsync(cacheKey, response, CacheKeys.MovieTtl, cancellationToken);
+            return Result<MovieResponse>.Success(response);
         }
         catch (Exception exception)
         {
             logger.LogError(exception, "Failed to fetch movie by title '{Title}'", query.Title);
-            throw;
+            return Result<MovieResponse>.Failure(Error.Unexpected);
         }
     }
 }
@@ -66,18 +71,26 @@ public sealed class GetMovieByTitleEndpoint : ICarterModule
                     return Results.ValidationProblem(errors);
                 }
 
-                var response = await bus.InvokeAsync<MovieResponse?>(
+                var result = await bus.InvokeAsync<Result<MovieResponse>>(
                     new GetMovieByTitleQuery(request.Title), cancellationToken);
 
-                return response is not null
-                    ? Results.Ok(response)
-                    : MovieErrors.TitleNotFound(request.Title).ToProblem(StatusCodes.Status404NotFound);
+                if (result.IsSuccess)
+                {
+                    return Results.Ok(result.Value);
+                }
+
+                var statusCode = result.Error!.Code == MovieErrors.TitleNotFound(request.Title).Code
+                    ? StatusCodes.Status404NotFound
+                    : StatusCodes.Status500InternalServerError;
+
+                return result.Error!.ToProblem(statusCode);
             })
            .RequireAuthorization()
            .WithName("GetMovieByTitle")
            .WithTags("Movies")
            .Produces<MovieResponse>()
            .ProducesValidationProblem()
-           .ProducesProblem(StatusCodes.Status404NotFound);
+           .ProducesProblem(StatusCodes.Status404NotFound)
+           .ProducesProblem(StatusCodes.Status500InternalServerError);
     }
 }

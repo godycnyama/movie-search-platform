@@ -60,10 +60,6 @@ public static class ApiExtensions
         return builder;
     }
 
-    /// <summary>
-    /// Wires up the Api project's own concerns — currently the CORS policy built
-    /// from <see cref="CorsSettings"/> (environment-specific origins, empty by default).
-    /// </summary>
     public static IServiceCollection AddApiServices(this IServiceCollection services, IConfiguration configuration)
     {
         services.AddOptions<CorsSettings>()
