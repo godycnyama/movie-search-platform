@@ -6,10 +6,4 @@
     <Nullable>enable</Nullable>
   </PropertyGroup>
 
-  <ItemGroup>
-    <!-- Pgvector.Vector is the CLR type the Npgsql/EF provider maps to the pgvector
-         "vector" column type; float[] is not translatable in similarity queries. -->
-    <PackageReference Include="Pgvector" />
-  </ItemGroup>
-
 </Project>

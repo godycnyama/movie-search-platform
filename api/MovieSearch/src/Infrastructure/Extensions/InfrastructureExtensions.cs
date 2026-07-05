@@ -11,7 +11,6 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.DependencyInjection;
 using Microsoft.IdentityModel.Tokens;
-using Pgvector.EntityFrameworkCore;
 
 namespace Infrastructure.Extensions;
 
@@ -33,9 +32,7 @@ public static class InfrastructureExtensions
             ?? throw new InvalidOperationException($"Missing '{nameof(PostgresSettings)}' configuration section.");
 
         services.AddDbContext<ApplicationDbContext>(options =>
-            options.UseNpgsql(
-                       postgresSettings.PostgresConnectionString,
-                       npgsqlOptions => npgsqlOptions.UseVector()) // Maps the Vector type
+            options.UseNpgsql(postgresSettings.PostgresConnectionString)
                    .UseSnakeCaseNamingConvention(), // Pipeline-owned schema uses snake_case (README §6)
             contextLifetime: ServiceLifetime.Scoped,
             // Singleton options (they capture no scoped state) let Wolverine's codegen

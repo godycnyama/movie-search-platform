@@ -15,7 +15,6 @@
     <PackageReference Include="Microsoft.Extensions.Options.DataAnnotations" />
     <PackageReference Include="ModelContextProtocol" />
     <PackageReference Include="Npgsql.EntityFrameworkCore.PostgreSQL" />
-    <PackageReference Include="Pgvector.EntityFrameworkCore" />
     <PackageReference Include="StackExchange.Redis" />
   </ItemGroup>
 
