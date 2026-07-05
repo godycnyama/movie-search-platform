@@ -27,6 +27,11 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 app.MapOpenApi();
+app.UseSwaggerUI(options =>
+{
+    options.SwaggerEndpoint("/openapi/v1.json", "Movie Search API");
+    options.RoutePrefix = "swagger";
+});
 app.MapScalarApiReference(options =>
 {
     options.WithTitle("Movie Search API")
