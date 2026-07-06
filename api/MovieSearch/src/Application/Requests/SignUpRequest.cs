@@ -3,10 +3,6 @@ using System.Text.Json.Serialization;
 
 namespace Application.Requests;
 
-/// <summary>
-/// Body for <c>POST /api/v1/auth/signup</c>. New accounts always get the "reader"
-/// role; admins are promoted out-of-band, never self-service.
-/// </summary>
 public class SignUpRequest
 {
     [Required(AllowEmptyStrings = false, ErrorMessage = "'email' is required.")]
@@ -16,6 +12,9 @@ public class SignUpRequest
 
     [Required(AllowEmptyStrings = false, ErrorMessage = "'password' is required.")]
     [MinLength(8, ErrorMessage = "'password' must be at least 8 characters.")]
+    [RegularExpression(
+    @"^(?=.*[A-Z])(?=.*[a-z])(?=.*\d)(?=.*[^a-zA-Z0-9]).+$",
+    ErrorMessage = "'password' must contain at least 1 uppercase letter, 1 lowercase letter, 1 number, and 1 special character.")]
     [JsonPropertyName("password")]
     public string Password { get; set; } = string.Empty;
 }

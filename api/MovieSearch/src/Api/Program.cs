@@ -7,7 +7,9 @@ using Infrastructure;
 using Infrastructure.Extensions;
 using Infrastructure.Services;
 using Microsoft.AspNetCore.Diagnostics.HealthChecks;
+using Microsoft.OpenApi;
 using Scalar.AspNetCore;
+
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -18,7 +20,34 @@ builder.Services.AddApiServices(builder.Configuration);
 builder.Services.AddRateLimiting(builder.Configuration);
 builder.Services.AddRequestTimeoutServices(builder.Configuration);
 
-builder.Services.AddOpenApi();
+builder.Services.AddOpenApi(options =>
+{
+    options.AddDocumentTransformer((document, context, cancellationToken) =>
+    {
+        document.Components ??= new OpenApiComponents();
+        document.Components.SecuritySchemes["Bearer"] = new OpenApiSecurityScheme
+        {
+            Type = SecuritySchemeType.Http,
+            Scheme = "bearer",
+            BearerFormat = "JWT",
+            In = ParameterLocation.Header,
+            Name = "Authorization",
+            Description = "Enter your JWT token"
+        };
+        return Task.CompletedTask;
+    });
+
+    // Apply it to every operation
+    options.AddOperationTransformer((operation, context, cancellationToken) =>
+    {
+        operation.Security ??= new List<OpenApiSecurityRequirement>();
+        operation.Security.Add(new OpenApiSecurityRequirement
+        {
+            [new OpenApiSecuritySchemeReference("Bearer", context.Document)] = []
+        });
+        return Task.CompletedTask;
+    });
+});
 
 builder.Services.AddHealthChecks()
        .AddDbContextCheck<ApplicationDbContext>("postgres")     // users/auth store
@@ -27,11 +56,7 @@ builder.Services.AddHealthChecks()
 var app = builder.Build();
 
 app.MapOpenApi();
-app.UseSwaggerUI(options =>
-{
-    options.SwaggerEndpoint("/openapi/v1.json", "Movie Search API");
-    options.RoutePrefix = "swagger";
-});
+
 app.MapScalarApiReference(options =>
 {
     options.WithTitle("Movie Search API")

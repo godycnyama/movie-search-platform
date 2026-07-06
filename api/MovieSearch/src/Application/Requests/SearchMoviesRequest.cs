@@ -5,9 +5,9 @@ namespace Application.Requests;
 
 public class SearchMoviesRequest
 {
-    [Required(AllowEmptyStrings = false, ErrorMessage = "'q' is required.")]
-    [JsonPropertyName("q")]
-    public string Q { get; set; } = string.Empty;
+    [Required(AllowEmptyStrings = false, ErrorMessage = "'query' is required.")]
+    [JsonPropertyName("query")]
+    public string Query { get; set; } = string.Empty;
 
     [Range(1, 50, ErrorMessage = "'top_k' must be between 1 and 50.")]
     [JsonPropertyName("top_k")]

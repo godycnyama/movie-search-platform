@@ -13,7 +13,6 @@ public class StatsResponse
     [JsonPropertyName("genres")]
     public int Genres { get; set; }
 
-    /// <summary>Inclusive <c>[min, max]</c> release-year range across the dataset.</summary>
     [JsonPropertyName("year_range")]
     public int[] YearRange { get; set; } = Array.Empty<int>();
 

@@ -16,7 +16,7 @@ using Wolverine;
 namespace Application.Features.Movies;
 
 public sealed record SearchMoviesQuery(
-    string Q,
+    string Query,
     int TopK,
     string? Genre,
     double? MinImdbRating,
@@ -34,7 +34,7 @@ public static class SearchMoviesHandler
     {
         try
         {
-            var cacheKey = CacheKeys.Search(query.Q, query.TopK, query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
+            var cacheKey = CacheKeys.Search(query.Query, query.TopK, query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
 
             var cached = await cacheService.GetAsync<SearchMoviesResponse>(cacheKey, cancellationToken);
             if (cached is not null)
@@ -44,7 +44,7 @@ public static class SearchMoviesHandler
 
             // The MCP server embeds the query and runs the pgvector search.
             var filters = new MovieSearchFilters(query.Genre, query.MinImdbRating, query.MpaaRating, query.Decade);
-            var search = await movieCatalog.SearchAsync(query.Q, filters, query.TopK, cancellationToken);
+            var search = await movieCatalog.SearchAsync(query.Query, filters, query.TopK, cancellationToken);
             if (!search.IsSuccess)
             {
                 return Result<SearchMoviesResponse>.Failure(search.Error!);
@@ -53,7 +53,7 @@ public static class SearchMoviesHandler
             var hits = search.Value!;
             var response = new SearchMoviesResponse
             {
-                Query = query.Q,
+                Query = query.Query,
                 Count = hits.Count,
                 Results = hits.Select(hit => hit.ToSearchResultDto()).ToList(),
             };
@@ -63,7 +63,7 @@ public static class SearchMoviesHandler
         }
         catch (Exception exception)
         {
-            logger.LogError(exception, "Semantic search failed for query '{Query}' (top_k {TopK})", query.Q, query.TopK);
+            logger.LogError(exception, "Semantic search failed for query '{Query}' (top_k {TopK})", query.Query, query.TopK);
             return Result<SearchMoviesResponse>.Failure(Error.Unexpected);
         }
     }
@@ -85,7 +85,7 @@ public sealed class SearchMoviesEndpoint : ICarterModule
             {
                 var request = new SearchMoviesRequest
                 {
-                    Q = q ?? string.Empty,
+                    Query = q ?? string.Empty,
                     Genre = genre,
                     MinImdbRating = minImdbRating,
                     MpaaRating = mpaaRating,
@@ -102,7 +102,7 @@ public sealed class SearchMoviesEndpoint : ICarterModule
                 }
 
                 var result = await bus.InvokeAsync<Result<SearchMoviesResponse>>(
-                    new SearchMoviesQuery(request.Q, request.TopK, request.Genre, request.MinImdbRating, request.MpaaRating, request.Decade),
+                    new SearchMoviesQuery(request.Query, request.TopK, request.Genre, request.MinImdbRating, request.MpaaRating, request.Decade),
                     cancellationToken);
 
                 return result.IsSuccess
