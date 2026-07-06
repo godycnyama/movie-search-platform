@@ -775,11 +775,6 @@ only; CPU- and memory-based auto-scaling; **VPC Flow Logs** enabled; **remote st
 DynamoDB locking** (managed separately); every resource tagged `Environment`, `Project`, `ManagedBy`
 via provider `default_tags`.
 
-- Never commit real `*.tfvars` or `backend.hcl` (both git-ignored; `.example` templates provided).
-- Deployment targets the organisation's own AWS account only — do not use public/consumer hosting.
-  Coordinate with the AI Engineering team before exposing the platform internally, and have
-  Security review the deploy role's IAM policy before first use.
-
 ---
 
 ## 13. Running Tests
