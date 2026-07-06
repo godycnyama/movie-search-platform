@@ -9,14 +9,14 @@
 # Services & ports (see README "Service Endpoints"):
 #   postgres     5432   PostgreSQL 16 + pgvector
 #   redis        6379   Redis 7 cache (API query results)
-#   embeddings   8001   Embedding model server (nomic-embed-text-v1.5, 768-dim)
+#   embeddings   8001   Embedding model server (BAAI/bge-base-en-v1.5, 768-dim)
 #   pipeline      —     Data pipeline (runs once and exits)
 #   mcp-server   8000   Python FastMCP server
 #   api          8080   .NET 10 Web API (public facing)
 #   prometheus   9090   Metrics collection
 #   grafana      3000   Dashboards
 #   jaeger      16686   Distributed tracing (OTLP in on 4317/4318)
-#   atlas        7000   Embedding Atlas visualization (bonus)
+
 
 x-postgres-env: &postgres-env
   POSTGRES_USER: ${POSTGRES_USER:?set POSTGRES_USER in .env}
@@ -51,7 +51,7 @@ services:
 
   # ---------------------------------------------------------------------------
   # Redis 7 — distributed cache for API query results (see RedisSettings /
-  # CacheService in the .NET API). Tuned as a cache: bounded memory + LRU eviction.
+  # CacheService in the .NET API). 
   # ---------------------------------------------------------------------------
   redis:
     image: redis:7-alpine
@@ -80,14 +80,13 @@ services:
   
   # ---------------------------------------------------------------------------
   # Embedding model server — runs as its own container (no in-process download).
-  # nomic-embed-text-v1.5 (768 dimensions) served over HTTP. This is the local
+  # BAAI/bge-base-en-v1.5 (768 dimensions) served over HTTP. This is the local
   # embedding backend for BOTH the pipeline (document embeddings) and the MCP
   # server (query embeddings) — they call it at http://embeddings:8001/embed.
   #
-  # NOTE: `ai/nomic-embed-text-v1.5` (Docker Model Runner) is the spec's suggestion.
+  # NOTE: `BAAI/bge-base-en-v1.5` (Docker Model Runner) is the spec's suggestion.
   # For a self-contained HTTP endpoint that works out of the box, HuggingFace Text
-  # Embeddings Inference (TEI) is used below serving the same model. Swap the
-  # image/command if you prefer Docker Model Runner or Ollama — keep 768-dim.
+  # Embeddings Inference (TEI) is used below serving the same model.
   # ---------------------------------------------------------------------------
   embeddings:
     image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
@@ -188,7 +187,7 @@ services:
 
   api:
     build:
-      context: ./api/MovieSearch   # solution root (Directory.*.props live here)
+      context: ./api/MovieSearch   
       dockerfile: src/Api/Dockerfile
     container_name: msp-api
     environment:
