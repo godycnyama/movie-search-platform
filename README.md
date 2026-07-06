@@ -848,8 +848,6 @@ a manual approval on the `production` GitHub environment.
 - The AWS stacks have not been applied to a real account yet — `terraform validate` passes and CI
   enforces fmt/validate, but the first apply (see [terraform/README.md](terraform/README.md))
   should be shepherded, and the deploy role's IAM policy reviewed by Security first.
-- No exported [openapi.json](openapi.json); the OpenAPI spec is served only
-  in the Development environment.
 - Locally, the pipeline and MCP server both embed via the single **TEI** `embeddings` service
   (`nomic-embed-text-v1.5`, 768-dim); the AWS stack swaps this for **Amazon Bedrock** (`ENV`
   drives dev/prod → Bedrock), so there is no in-cluster inference in the cloud.
