@@ -495,10 +495,7 @@ to `application/problem+json` responses through the `Result<T>` type and a globa
 | API docs | **OpenAPI** spec + **Scalar** interactive UI |
 | Observability | **OpenTelemetry** (traces + Prometheus metrics) — see §11 |
 
-**Why Minimal APIs over controllers?** The API is a small set of thin HTTP endpoints that immediately
-hand off to Wolverine handlers, so the MVC controller machinery (attribute routing, model-binder
-conventions, filter pipeline, per-action base classes) would add ceremony without buying anything
-here. Minimal APIs give lower request overhead and faster startup, and — paired with **Carter** —
+**Why Minimal APIs over controllers?** Minimal APIs give lower request overhead and faster startup, and — paired with **Carter** —
 let each vertical slice register its own route inline alongside its handler, request and response
 models. That keeps a feature's endpoint in the same file as its logic (reinforcing the Vertical
 Slice design) instead of scattering it across a separate `Controllers/` folder, while still
@@ -506,8 +503,7 @@ producing the same OpenAPI document and supporting the same auth, validation and
 
 ### Using the Scalar UI
 
-Interactive API docs are served by **Scalar** at **http://localhost:8080/scalar** (Development
-only; the raw OpenAPI spec is at `/openapi/v1.json`, and a copy is committed at
+Interactive API docs are served by **Scalar** at **http://localhost:8080/scalar** (the raw OpenAPI spec is at `/openapi/v1.json`, and a copy is committed at
 [openapi.json](openapi.json)). To exercise the endpoints from the browser:
 
 1. Open **http://localhost:8080/scalar**.
