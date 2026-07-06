@@ -58,7 +58,7 @@ to **AWS via Terraform**.
 
   Cache:         Redis 7 (:6379) — API query-result cache (LRU, password-protected)
   Observability: OpenTelemetry → Jaeger (:16686) · Prometheus (:9090) · Grafana (:3000)
-  Deployment:    Terraform (terraform/) → AWS ECS Fargate   ✅ see §12
+  Deployment:    Terraform (terraform/) → AWS ECS Fargate   see §12
   Bonus:         Embedding Atlas (:7000, compose profile "bonus")
 ```
 
@@ -150,7 +150,7 @@ Local URLs when running via Docker Compose (ports per [docker-compose.yml](docke
 **Location:** [pipeline/](pipeline/) — entrypoint [pipeline/src/main.py](pipeline/src/main.py).
 Runs as a one-shot Compose service: the container first applies schema migrations
 (`alembic upgrade head`, versions mounted from [database/migrations/](database/migrations/)), then
-executes the pipeline and exits. ✅ **Implemented.**
+executes the pipeline and exits. **Implemented.**
 
 ### How it works
 
@@ -215,7 +215,7 @@ similarity scores.
 Cleaning and imputation strategy across the Vega fields, chosen to **preserve data quality for
 semantic search** — the guiding principle is to never fabricate values that feed the embedding text
 or that users filter/sort on. Prefer an honest `NULL` (or a real "Unknown"/"Not Rated" category)
-over invented data. ✅ Implemented as described in
+over invented data. Implemented as described in
 [cleaning.py](pipeline/src/pipeline/cleaning.py) / [imputation.py](pipeline/src/pipeline/imputation.py).
 
 | Field | Strategy | Why |
@@ -295,7 +295,7 @@ Budget tier: {budget_tier}. A blockbuster with high budget and high worldwide gr
 
 **Location:** [mcp-server/](mcp-server/) — a **FastMCP** server exposing the movie catalogue as
 semantic-search **tools** consumable by any MCP-compatible client (the .NET API, LLM agents, the
-MCP Inspector). ✅ **Implemented.**
+MCP Inspector). **Implemented.**
 
 ### Technology stack
 
@@ -730,7 +730,7 @@ curl "http://localhost:8080/api/v1/movies/genres" -H "Authorization: Bearer $TOK
 
 ## 11. Observability
 
-**Location:** [monitoring/](monitoring/) — ✅ Prometheus scrape config, Grafana datasource +
+**Location:** [monitoring/](monitoring/) — Prometheus scrape config, Grafana datasource +
 dashboard provisioning, and the `movie-search.json` dashboard are committed.
 
 | Signal | Tooling | Where to find it |
@@ -753,7 +753,7 @@ durations).
 
 ## 12. Terraform Deployment
 
-**Location:** [terraform/](terraform/) — ✅ **implemented** (see the detailed
+**Location:** [terraform/](terraform/) — **implemented** (see the detailed
 [terraform/README.md](terraform/README.md)). Target: **AWS ECS Fargate** — the **.NET API** and
 **MCP server** each autoscale between **1 and 2 tasks** (CPU target tracking), with query and
 document embeddings served by **Amazon Bedrock** (no in-cluster inference) and the **pipeline** as
