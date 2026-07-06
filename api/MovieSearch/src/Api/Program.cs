@@ -92,6 +92,9 @@ app.MapScalarApiReference(options =>
         .WithDefaultHttpClient(ScalarTarget.CSharp, ScalarClient.HttpClient);
 });
 
+// Land on the interactive API docs when hitting the root.
+app.MapGet("/", () => Results.Redirect("/scalar")).ExcludeFromDescription();
+
 app.UseHsts();
 app.UseResponseCompression();
 
