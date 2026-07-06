@@ -74,7 +74,7 @@ public sealed class SearchMoviesEndpoint : ICarterModule
     public void AddRoutes(IEndpointRouteBuilder app)
     {
         app.MapApiGroup("Movies").MapGet("/movies/search", async (
-                [FromQuery(Name = "q")] string? q,
+                [FromQuery(Name = "query")] string? query,
                 [FromQuery(Name = "top_k")] int? topK,
                 [FromQuery(Name = "genre")] string? genre,
                 [FromQuery(Name = "min_imdb_rating")] double? minImdbRating,
@@ -85,7 +85,7 @@ public sealed class SearchMoviesEndpoint : ICarterModule
             {
                 var request = new SearchMoviesRequest
                 {
-                    Query = q ?? string.Empty,
+                    Query = query ?? string.Empty,
                     Genre = genre,
                     MinImdbRating = minImdbRating,
                     MpaaRating = mpaaRating,

@@ -333,37 +333,145 @@ Budget tier: {budget_tier}. A blockbuster with high budget and high worldwide gr
 
 ## 8. MCP Server
 
-**Location:** [mcp-server/](mcp-server/) — a **FastMCP** server exposing movie search as MCP tools
-consumable by any MCP-compatible client. ✅ **Implemented:** transport is **SSE** by default
-(`MCP_TRANSPORT=sse`; `streamable-http` supported for production, `stdio` via
-`python -m server.main`), with an **asyncpg** connection pool to pgvector
-([db.py](mcp-server/src/server/db.py)), TEI query embeddings
-([embeddings.py](mcp-server/src/server/embeddings.py)), Pydantic models, JSON structured logging
-with per-request IDs and tool timings, and a `GET /health` endpoint. In Docker it runs under
-uvicorn via the ASGI factory ([asgi.py](mcp-server/src/server/asgi.py)).
+**Location:** [mcp-server/](mcp-server/) — a **FastMCP** server exposing the movie catalogue as
+semantic-search **tools** consumable by any MCP-compatible client (the .NET API, LLM agents, the
+MCP Inspector). ✅ **Implemented.**
+
+### Technology stack
+
+| Concern | Choice | Notes |
+|---------|--------|-------|
+| Language / runtime | **Python 3.13** | Pinned in [pyproject.toml](mcp-server/pyproject.toml) (`requires-python >=3.13`) |
+| MCP framework | **FastMCP** (`fastmcp >= 3.4.2`) | Derives each tool's input schema from its type-annotated signature |
+| ASGI server | **uvicorn** | Serves the app via the ASGI factory ([asgi.py](mcp-server/src/server/asgi.py)) |
+| Database driver | **asyncpg** connection pool + **pgvector** | Vector similarity search against Postgres ([db.py](mcp-server/src/server/db.py)) |
+| Query embeddings | **httpx** → TEI (local) · **boto3** → Amazon Bedrock (dev/prod) | Same model as the pipeline; selected by `ENV` ([embeddings.py](mcp-server/src/server/embeddings.py)) |
+| Models / validation | **Pydantic v2** + **pydantic-settings** + **SQLModel** | Typed tool I/O and env-bound settings |
+| Metrics | **prometheus-client** | Per-tool call counts + durations on `GET /metrics` |
+| Package / env manager | **uv** (`uv.lock` committed) | Reproducible installs |
+| Lint · types · tests | **ruff** · **mypy** · **pytest** + **pytest-asyncio** | Dev dependency group; all run in CI |
+
+### Transport & runtime
+
+Transport is **SSE** by default (`MCP_TRANSPORT=sse`); `streamable-http` is supported for
+production and `stdio` via `python -m server.main`. Structured JSON logs carry per-request IDs and
+tool timings, and the server exposes `GET /health` and `GET /metrics`. In Docker it runs under
+uvicorn.
 
 ### Available tools
 
 All five tools from the spec — plus `get_movie_by_id`, which backs the .NET API's by-id endpoint —
-are registered in [tools.py](mcp-server/src/server/tools.py); FastMCP derives input schemas from
-the type-annotated signatures. `top_k` is clamped to [1, 50]. The .NET API is itself an MCP client
-of this server: every `/api/v1/movies/*` and `/api/v1/stats` read maps to one of these tools.
+are registered in [tools.py](mcp-server/src/server/tools.py). `top_k` is clamped to **[1, 50]**. The
+.NET API is itself an MCP client of this server: every `/api/v1/movies/*` and `/api/v1/stats` read
+maps to one of these tools.
 
-| Tool | Description | Arguments |
-|------|-------------|-----------|
-| `search_movies_by_description` | Semantic vector search with optional metadata filters; returns ranked results with similarity scores | `query: str`, `top_k: int = 10`, `genre_filter: str \| None`, `min_imdb_rating: float \| None`, `mpaa_rating: str \| None`, `decade: int \| None` |
-| `get_movie_by_id` | Retrieve a movie by its stable UUID (null when unknown) | `movie_id: str` |
-| `get_movie_by_title` | Retrieve a movie by exact or fuzzy title match | `title: str` |
-| `get_similar_movies` | Most semantically similar movies to a given movie (UUID validated; unknown IDs raise a clear error) | `movie_id: str`, `top_k: int = 5` |
-| `list_genres` | All distinct genres in the dataset | — |
-| `get_dataset_stats` | Summary statistics (totals, embedding coverage, year range, avg IMDB rating, pipeline version) | — |
+| Tool | Description | Arguments | Returns |
+|------|-------------|-----------|---------|
+| `search_movies_by_description` | Semantic vector search with optional metadata filters; ranked results with similarity scores | `query: str`, `top_k: int = 10`, `genre_filter: str \| None`, `min_imdb_rating: float \| None`, `mpaa_rating: str \| None`, `decade: int \| None` | `list[MovieResult]` |
+| `get_movie_by_id` | Retrieve a movie by its stable UUID | `movie_id: str` | `MovieResult \| null` |
+| `get_movie_by_title` | Retrieve a movie by exact or fuzzy title match | `title: str` | `MovieResult \| null` |
+| `get_similar_movies` | Most semantically similar movies to a given movie | `movie_id: str`, `top_k: int = 5` | `list[MovieResult]` |
+| `list_genres` | All distinct genres in the dataset | — | `list[str]` |
+| `get_dataset_stats` | Summary statistics (totals, embedding coverage, year range, avg IMDB rating, pipeline version) | — | `DatasetStats` |
 
-### How to test the tools directly
+> **Errors.** `get_movie_by_id` / `get_similar_movies` validate the UUID and raise a clear error on
+> a malformed id; `get_similar_movies` also errors when the id is unknown. `get_movie_by_id` and
+> `get_movie_by_title` return `null` when nothing matches.
+
+### Tool reference — example inputs & outputs
+
+**`search_movies_by_description`**
+
+```jsonc
+// input
+{ "query": "sci-fi films directed by James Cameron", "top_k": 2, "min_imdb_rating": 7.5 }
+```
+```jsonc
+// output — list[MovieResult] (ranked by cosine similarity, highest first)
+[
+  { "id": "9f1c2d3e-…", "title": "Terminator 2: Judgment Day", "release_year": 1991,
+    "major_genre": "Action", "director": "James Cameron", "distributor": "TriStar Pictures",
+    "mpaa_rating": "R", "imdb_rating": 8.5, "rotten_tomatoes_rating": 93,
+    "production_budget": 102000000, "running_time_min": 137, "budget_tier": "blockbuster",
+    "decade": 1990, "similarity_score": 0.87 },
+  { "id": "c7b4…", "title": "Aliens", "release_year": 1986, "major_genre": "Action",
+    "director": "James Cameron", "imdb_rating": 8.4, "similarity_score": 0.83 }
+]
+```
+
+**`get_movie_by_id`**
+
+```jsonc
+// input
+{ "movie_id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71" }
+```
+```jsonc
+// output — MovieResult (similarity_score is null for direct lookups); null if the id is unknown
+{ "id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71", "title": "Interstellar",
+  "release_year": 2014, "major_genre": "Adventure", "director": "Christopher Nolan",
+  "distributor": "Paramount Pictures", "mpaa_rating": "PG-13", "imdb_rating": 8.7,
+  "rotten_tomatoes_rating": 91, "running_time_min": 169, "budget_tier": "high",
+  "decade": 2010, "similarity_score": null }
+```
+
+**`get_movie_by_title`**
+
+```jsonc
+// input — exact (case-insensitive) match first, then fuzzy substring
+{ "title": "interstellar" }
+```
+```jsonc
+// output — MovieResult, or null when no title matches
+{ "id": "9ddc4d0d-…", "title": "Interstellar", "release_year": 2014,
+  "major_genre": "Adventure", "director": "Christopher Nolan", "imdb_rating": 8.7,
+  "similarity_score": null }
+```
+
+**`get_similar_movies`**
+
+```jsonc
+// input
+{ "movie_id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71", "top_k": 2 }
+```
+```jsonc
+// output — list[MovieResult] most similar to the source movie
+[
+  { "id": "d8c918…", "title": "The Martian", "release_year": 2015, "major_genre": "Adventure",
+    "imdb_rating": 8.0, "similarity_score": 0.95 },
+  { "id": "e4ab62…", "title": "Gravity", "release_year": 2013, "major_genre": "Drama",
+    "imdb_rating": 7.7, "similarity_score": 0.92 }
+]
+```
+
+**`list_genres`**
+
+```jsonc
+// input — none
+{}
+```
+```jsonc
+// output — list[str]
+["Action", "Adventure", "Comedy", "Drama", "Horror", "Musical", "Thriller", "Western"]
+```
+
+**`get_dataset_stats`**
+
+```jsonc
+// input — none
+{}
+```
+```jsonc
+// output — DatasetStats
+{ "total_movies": 3201, "with_embeddings": 3201, "genres": 12,
+  "year_range": [1915, 2010], "avg_imdb_rating": 6.28, "pipeline_version": "0.1.0" }
+```
+
+### Exercise the tools directly
 
 ```bash
 # Interactive: point the MCP Inspector at the SSE endpoint (no code required)
 npx @modelcontextprotocol/inspector
-#   → Transport: SSE, URL: http://localhost:8000/sse
+#   → Transport: SSE, URL: http://localhost:8000/sse   then call any tool above
 
 # Health check
 curl http://localhost:8000/health
@@ -373,6 +481,24 @@ Example natural-language queries the system handles: *"action movies from the 90
 ratings"*, *"critically acclaimed drama films with small budgets"*, *"animated family movies
 distributed by Disney"*, *"sci-fi films directed by James Cameron"*, *"dark psychological thrillers
 with low Rotten Tomatoes scores"*.
+
+### Test & lint the MCP server locally
+
+All commands run from [mcp-server/](mcp-server/) and use **uv** (installs the `dev` dependency
+group). These mirror the CI job in [.github/workflows/ci.yml](.github/workflows/ci.yml):
+
+```bash
+cd mcp-server
+uv sync                              # create the venv and install deps (incl. dev tools)
+
+uv run ruff check .                  # lint  (rules: E, F, I, UP, B — line length 100)
+uv run ruff format .                 # optional: auto-format
+uvx mypy --ignore-missing-imports src  # static type check
+uv run pytest -q                     # tests — all six tools via FastMCP's in-memory client,
+                                     #         plus the /health and /metrics HTTP routes
+```
+
+Tests run against fake db/embeddings backends, so no Postgres or model server is required.
 
 ---
 
@@ -385,117 +511,252 @@ as the in-process CQRS mediator, URL-segment **API versioning**, the official
 against the MCP server — the API never queries the movies tables), EF Core for the API-owned
 `users` table, and **Redis**-backed response caching in the query handlers.
 
-**Base URL:** `http://localhost:8080` · OpenAPI spec at `/openapi/v1.json` (Development only).
-All `/api/v1/movies/*` and `/api/v1/stats` endpoints require a valid JWT (see
-[Authentication](#10-authentication)).
+**Base URL:** `http://localhost:8080` · OpenAPI spec at `/openapi/v1.json` and interactive **Scalar**
+docs at `/scalar/v1` (both Development only). All `/api/v1/movies/*` and `/api/v1/stats` endpoints
+require a valid JWT (see [Authentication](#10-authentication)); auth endpoints are noted per-row.
 
-### `GET /health` — liveness + readiness (no auth)
+### Endpoint summary
+
+| Method | Path | Auth | Purpose |
+|--------|------|------|---------|
+| `GET`  | `/health` | none | Liveness + readiness (per-dependency status) |
+| `POST` | `/api/v1/auth/signup` | anonymous | Create an account, returns a bearer token |
+| `POST` | `/api/v1/auth/login` | anonymous | Log in, returns a bearer token |
+| `POST` | `/api/v1/auth/change-password` | any user | Change the caller's password |
+| `POST` | `/api/v1/auth/assignadminrole` | **admin** | Promote another account to `admin` |
+| `GET`  | `/api/v1/movies/search` | reader+ | Natural-language semantic search |
+| `GET`  | `/api/v1/movies/{id}` | reader+ | Get one movie by UUID |
+| `GET`  | `/api/v1/movies/by-title` | reader+ | Get one movie by title (exact → fuzzy) |
+| `GET`  | `/api/v1/movies/{id}/similar` | reader+ | Movies similar to a given movie |
+| `GET`  | `/api/v1/movies/genres` | reader+ | Distinct genres |
+| `GET`  | `/api/v1/stats` | **admin** | Dataset statistics |
+
+All endpoints validate inputs (data-annotation validation → RFC 7807 `ValidationProblem`) and map
+domain errors to `application/problem+json` responses via a shared `Result<T>` type. Full request/
+response schemas are in the committed OpenAPI spec.
+
+---
+
+### Auth endpoints
+
+#### `POST /api/v1/auth/signup` — create account *(anonymous)*
+
+The **first account ever created becomes `admin`**; every subsequent sign-up is a `reader`.
+Passwords must be ≥ 8 chars with upper, lower, digit and symbol. Returns **201** with a token, or
+**409** if the email is already registered.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/signup \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "john@example.com", "password": "MyPassword123!" }'
+```
+```jsonc
+// 201 Created
+{ "access_token": "<jwt-token>", "token_type": "Bearer", "expires_in": 3600, "role": "reader" }
+```
+
+#### `POST /api/v1/auth/login` — obtain a token *(anonymous)*
+
+Returns **200** with a token, or **401** for unknown email *or* wrong password (identical error, so
+account existence is never leaked).
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{ "email": "john@example.com", "password": "MyPassword123!" }'
+```
+```jsonc
+// 200 OK
+{ "access_token": "<jwt-token>", "token_type": "Bearer", "expires_in": 3600, "role": "reader" }
+```
+
+#### `POST /api/v1/auth/change-password` — rotate password *(any authenticated user)*
+
+Verifies the current password (**400** if wrong), then sets the new one.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/change-password \
+  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{ "current_password": "MyPassword123!", "new_password": "NewPassword123!" }'
+```
+```jsonc
+// 200 OK
+{ "message": "Password changed successfully." }
+```
+
+#### `POST /api/v1/auth/assignadminrole` — promote a user *(admin only)*
+
+**403** for non-admin callers, **404** if the target email does not exist.
+
+```bash
+curl -X POST http://localhost:8080/api/v1/auth/assignadminrole \
+  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
+  -d '{ "email": "john@example.com" }'
+```
+```jsonc
+// 200 OK
+{ "message": "Admin role assigned successfully." }
+```
+
+---
+
+### Health endpoint
+
+#### `GET /health` — liveness + readiness *(no auth)*
 
 ```bash
 curl http://localhost:8080/health
 ```
-```json
+```jsonc
+// 200 OK
 { "status": "Healthy", "dependencies": { "postgres": "Healthy", "mcp-server": "Healthy" } }
 ```
 
-### `GET /api/v1/movies/search` — natural-language search
+---
 
-Query params: `q` (required), `top_k` (default 10, max 50), `genre`, `min_imdb_rating`,
-`mpaa_rating`, `decade`. Results are cached in Redis per query+filters.
+### Movie endpoints *(require a valid JWT)*
+
+#### `GET /api/v1/movies/search` — natural-language search
+
+Query params: **`query`** (required), `top_k` (default 10, clamped to 50), `genre`,
+`min_imdb_rating`, `mpaa_rating`, `decade`. Results are cached in Redis per query + filters.
 
 ```bash
-curl "http://localhost:8080/api/v1/movies/search?q=sci-fi%20films%20directed%20by%20James%20Cameron&top_k=3" \
+curl -G "http://localhost:8080/api/v1/movies/search" \
+  --data-urlencode "query=sci-fi films directed by James Cameron" \
+  --data-urlencode "top_k=2" \
   -H "Authorization: Bearer $TOKEN"
 ```
-```json
+```jsonc
+// 200 OK
 {
   "query": "sci-fi films directed by James Cameron",
-  "count": 3,
+  "count": 2,
   "results": [
-    { "id": "9f1c…", "title": "Terminator 2: Judgment Day", "release_year": 1991,
+    { "id": "9f1c2d3e-…", "title": "Terminator 2: Judgment Day", "release_year": 1991,
       "major_genre": "Action", "director": "James Cameron", "imdb_rating": 8.5,
-      "similarity_score": 0.86 }
+      "rt_rating": 93, "similarity_score": 0.87 },
+    { "id": "c7b4…", "title": "Aliens", "release_year": 1986, "major_genre": "Action",
+      "director": "James Cameron", "imdb_rating": 8.4, "similarity_score": 0.83 }
   ]
 }
 ```
 
-### `GET /api/v1/movies/{id}` — get movie by ID
+#### `GET /api/v1/movies/{id}` — get movie by ID
+
+Returns the full movie record, or **404** if the id is unknown.
 
 ```bash
-curl http://localhost:8080/api/v1/movies/<GUID> -H "Authorization: Bearer $TOKEN"
+curl "http://localhost:8080/api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71" \
+  -H "Authorization: Bearer $TOKEN"
+```
+```jsonc
+// 200 OK
+{ "id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71", "title": "Interstellar",
+  "release_year": 2014, "major_genre": "Adventure", "director": "Christopher Nolan",
+  "distributor": "Paramount Pictures", "mpaa_rating": "PG-13", "imdb_rating": 8.7,
+  "rt_rating": 91, "running_time_min": 169, "budget_tier": "high", "decade": 2010 }
 ```
 
-Returns the full movie record (metadata, ratings, `budget_tier`, `decade`, …) or `404`.
+#### `GET /api/v1/movies/by-title` — get movie by title
 
-### `GET /api/v1/movies/by-title` — get movie by title
-
-Exact (case-insensitive) title match first, then fuzzy substring match — same semantics as the
-MCP `get_movie_by_title` tool it calls. Returns the full movie record or `404`.
+Query param `title`. Exact (case-insensitive) match first, then fuzzy substring — same semantics as
+the MCP `get_movie_by_title` tool it calls. Returns the movie record or **404**.
 
 ```bash
-curl "http://localhost:8080/api/v1/movies/by-title?title=terminator" -H "Authorization: Bearer $TOKEN"
+curl -G "http://localhost:8080/api/v1/movies/by-title" \
+  --data-urlencode "title=Interstellar" \
+  -H "Authorization: Bearer $TOKEN"
+```
+```jsonc
+// 200 OK
+{ "id": "9ddc4d0d-…", "title": "Interstellar", "release_year": 2014,
+  "major_genre": "Adventure", "director": "Christopher Nolan", "imdb_rating": 8.7 }
 ```
 
-### `GET /api/v1/movies/{id}/similar` — similar movies
+#### `GET /api/v1/movies/{id}/similar` — similar movies
+
+Query param `top_k` (default 5, clamped to 50). Returns **404** if the source id is unknown.
 
 ```bash
-curl "http://localhost:8080/api/v1/movies/<GUID>/similar?top_k=5" -H "Authorization: Bearer $TOKEN"
+curl "http://localhost:8080/api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71/similar?top_k=2" \
+  -H "Authorization: Bearer $TOKEN"
+```
+```jsonc
+// 200 OK
+{
+  "source_id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71",
+  "results": [
+    { "id": "d8c918…", "title": "The Martian", "similarity_score": 0.95 },
+    { "id": "e4ab62…", "title": "Gravity",     "similarity_score": 0.92 }
+  ]
+}
 ```
 
-### `GET /api/v1/movies/genres` — list genres
+#### `GET /api/v1/movies/genres` — list genres
 
 ```bash
 curl http://localhost:8080/api/v1/movies/genres -H "Authorization: Bearer $TOKEN"
 ```
-```json
+```jsonc
+// 200 OK
 { "genres": ["Action", "Adventure", "Comedy", "Drama", "Horror", "Musical", "Thriller", "Western"] }
 ```
 
-### `GET /api/v1/stats` — dataset statistics (**admin** role)
+---
+
+### Statistics endpoint
+
+#### `GET /api/v1/stats` — dataset statistics *(admin only)*
+
+**403** for non-admin callers.
 
 ```bash
 curl http://localhost:8080/api/v1/stats -H "Authorization: Bearer $ADMIN_TOKEN"
 ```
-```json
+```jsonc
+// 200 OK
 { "total_movies": 3201, "with_embeddings": 3201, "genres": 12,
   "year_range": [1915, 2010], "avg_imdb_rating": 6.28, "pipeline_version": "0.1.0" }
 ```
 
-All endpoints validate inputs (data-annotation validation → RFC 7807 `ValidationProblem`) and map
-domain errors to problem-details responses via a shared `Result<T>` type.
+### Linting the .NET API
+
+The API is formatted and lint-checked with `dotnet format` (enforced by CI —
+[.github/workflows/ci.yml](.github/workflows/ci.yml)):
+
+```bash
+# Verify formatting/analyzers with no changes (this is exactly what CI runs)
+dotnet format api/MovieSearch/MovieSearch.slnx --verify-no-changes --verbosity minimal
+
+# Auto-apply fixes locally
+dotnet format api/MovieSearch/MovieSearch.slnx
+```
 
 ---
 
 ## 10. Authentication
 
 The API uses **JWT Bearer token** authentication with email/password accounts stored in Postgres
-(`users` table, **PBKDF2** password hashing). Two roles: **`reader`** (all movie endpoints) and
-**`admin`** (additionally `/api/v1/stats`). Sign-up always creates a `reader`; promoting to `admin`
-is a manual DB operation.
+(`users` table, **PBKDF2** password hashing). Two roles:
 
-### Endpoints (anonymous)
+- **`reader`** — all movie endpoints (`/api/v1/movies/*`).
+- **`admin`** — everything a reader can do, plus `/api/v1/stats` and `/api/v1/auth/assignadminrole`.
 
-```bash
-# Create an account — returns a bearer token immediately
-curl -X POST http://localhost:8080/api/v1/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com","password":"<strong password>"}'
+**Role assignment:** the **first account created becomes `admin`** (bootstrap); every subsequent
+sign-up is a `reader`. An existing admin can promote others via
+`POST /api/v1/auth/assignadminrole`. Full request/response examples for all four auth endpoints are
+in [§9 → Auth endpoints](#auth-endpoints).
 
-# Log in
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{"email":"you@example.com","password":"<strong password>"}'
-```
-```json
-{ "access_token": "eyJhbGciOi…", "token_type": "Bearer", "expires_in": 3600, "role": "reader" }
-```
-
-There is also `POST /api/v1/auth/change-password` (authenticated).
-
-### Use the token
+### Typical flow
 
 ```bash
-TOKEN="eyJhbGciOi…"
+# 1. Sign up (or log in) and capture the token
+TOKEN=$(curl -s -X POST http://localhost:8080/api/v1/auth/login \
+  -H "Content-Type: application/json" \
+  -d '{"email":"you@example.com","password":"<strong password>"}' | jq -r .access_token)
+
+# 2. Call a protected endpoint with the bearer token
 curl "http://localhost:8080/api/v1/movies/genres" -H "Authorization: Bearer $TOKEN"
 ```
 
@@ -593,8 +854,25 @@ cd api/MovieSearch && dotnet test             # .NET — xUnit
 k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080
 ```
 
-**Linting:** `ruff check .` in both Python projects (enforced by CI). CD
-([.github/workflows/cd.yml](.github/workflows/cd.yml)) builds and pushes the images to ECR via
+### Linting & static analysis
+
+All of the below are enforced by CI ([.github/workflows/ci.yml](.github/workflows/ci.yml)):
+
+```bash
+# .NET API — format + analyzer check (CI uses --verify-no-changes; drop it to auto-fix)
+dotnet format api/MovieSearch/MovieSearch.slnx --verify-no-changes --verbosity minimal
+
+# Python services — ruff lint + mypy type check (run in each project dir)
+cd pipeline   && uv run ruff check . && uvx mypy --ignore-missing-imports src
+cd mcp-server && uv run ruff check . && uvx mypy --ignore-missing-imports src
+```
+
+Ruff is configured per project in `pyproject.toml` (rule set `E, F, I, UP, B`, line length 100).
+`terraform fmt -check -recursive` and `terraform validate` cover the IaC.
+
+### Continuous delivery
+
+CD ([.github/workflows/cd.yml](.github/workflows/cd.yml)) builds and pushes the images to ECR via
 OIDC, auto-deploys **dev** with `terraform apply`, and promotes the same images to **prod** behind
 a manual approval on the `production` GitHub environment.
 

@@ -1,5 +1,6 @@
 using Api.Settings;
 using Microsoft.AspNetCore.Http.Timeouts;
+using Microsoft.AspNetCore.Mvc;
 using Npgsql;
 using OpenTelemetry.Metrics;
 using OpenTelemetry.Resources;
@@ -98,8 +99,7 @@ public static class ApiExtensions
         {
             options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
 
-            // Emit RFC 6585 Retry-After so clients can back off politely.
-            options.OnRejected = (context, cancellationToken) =>
+            options.OnRejected = async (context, cancellationToken) =>
             {
                 if (context.Lease.TryGetMetadata(MetadataName.RetryAfter, out var retryAfter))
                 {
@@ -107,7 +107,15 @@ public static class ApiExtensions
                         ((int)retryAfter.TotalSeconds).ToString(NumberFormatInfo.InvariantInfo);
                 }
 
-                return ValueTask.CompletedTask;
+                context.HttpContext.Response.ContentType = "application/problem+json";
+
+                await context.HttpContext.Response.WriteAsJsonAsync(new ProblemDetails
+                {
+                    Status = StatusCodes.Status429TooManyRequests,
+                    Title = "Too many requests",
+                    Detail = "Rate limit exceeded. Please retry later.",
+                    Instance = $"{context.HttpContext.Request.Method} {context.HttpContext.Request.Path}"
+                }, cancellationToken);
             };
 
             options.AddPolicy(RateLimitSettings.PolicyName, httpContext =>
