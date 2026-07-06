@@ -31,7 +31,7 @@ to **AWS via Terraform**.
 ```
                         ┌────────────────────────────────────────────────────────┐
                         │                     Clients / Users                     │
-                        │      (web UI, curl, LLM agents via MCP Inspector)        │
+                        │ (Scalar UI, web UI, curl, LLM agents via MCP Inspector) │
                         └───────────────┬───────────────────────┬─────────────────┘
                                         │ HTTPS/REST (JWT)       │ MCP (SSE)
                                         ▼                        ▼
@@ -461,16 +461,55 @@ Tests run against fake db/embeddings backends, so no Postgres or model server is
 
 ## 9. API Documentation
 
-**Location:** [api/MovieSearch/](api/MovieSearch/) — a layered .NET 10 solution
-(`Domain` / `Application` / `Infrastructure` / `Api`) using **Carter** endpoint slices, **Wolverine**
-as the in-process CQRS mediator, URL-segment **API versioning**, the official
-**ModelContextProtocol** C# SDK as the movie data client (all movie/stats reads are MCP tool calls
-against the MCP server — the API never queries the movies tables), EF Core for the API-owned
-`users` table, and **Redis**-backed response caching in the query handlers.
+**Location:** [api/MovieSearch/](api/MovieSearch/) — a **.NET 10** REST API providing secure user
+authentication and AI-powered movie search. All movie/stats reads are MCP tool calls against the
+[MCP server](#8-mcp-server) (the official **ModelContextProtocol** C# SDK over SSE — the API never
+queries the movies tables directly); EF Core is used only for the API-owned `users` table.
 
-**Base URL:** `http://localhost:8080` · OpenAPI spec at `/openapi/v1.json` and interactive **Scalar**
-docs at `/scalar/v1` (both Development only). All `/api/v1/movies/*` and `/api/v1/stats` endpoints
-require a valid JWT (see [Authentication](#10-authentication)); auth endpoints are noted per-row.
+### Architecture & design patterns
+
+The solution combines **Clean Architecture** with **Vertical Slice Architecture**, keeping the
+codebase modular, testable and easy to navigate. It is a layered solution —
+`Domain` / `Application` / `Infrastructure` / `Api` — with these patterns:
+
+| Pattern | How it's applied | Why it matters |
+|---------|------------------|----------------|
+| **Vertical Slice Architecture** | Each feature is a self-contained slice ([Application/Features/](api/MovieSearch/src/Application/Features/)) bundling its **endpoint, request model, validation, command/query, handler and response model** in one place (via **Carter** endpoint modules) | Related code lives together; minimal coupling between features |
+| **CQRS** (via **Wolverine**) | Commands and queries are dispatched through Wolverine as the in-process mediator | Loosely coupled handlers, simple DI, high testability, an extensible messaging pipeline with built-in middleware support |
+| **Result Pattern** | Handlers return a shared `Result<T>` instead of throwing for *expected* application errors (not found, conflict, validation) | Better performance, explicit success/failure handling, cleaner business logic, easier unit testing |
+| **Repository Pattern** | EF Core repositories abstract persistence for the `users` store behind interfaces in the Application layer | Business logic stays independent of the database implementation |
+
+Inputs are validated with data annotations (→ RFC 7807 `ValidationProblem`), and domain errors map
+to `application/problem+json` responses through the `Result<T>` type and a global exception handler.
+
+### Technology stack
+
+| Concern | Choice |
+|---------|--------|
+| Runtime / framework | **.NET 10** · **ASP.NET Core Minimal APIs** (Carter endpoint slices) |
+| Messaging / CQRS | **Wolverine** (in-process mediator) |
+| Persistence (users) | **PostgreSQL 16** via **Entity Framework Core** |
+| Movie data source | **ModelContextProtocol** C# SDK → MCP server (SSE) |
+| Cache | **Redis** (query-result caching in the query handlers) |
+| AuthN / AuthZ | **JWT Bearer** tokens · role-based authorization |
+| API docs | **OpenAPI** spec + **Scalar** interactive UI |
+| Observability | **OpenTelemetry** (traces + Prometheus metrics) — see §11 |
+
+### Using the Scalar UI
+
+Interactive API docs are served by **Scalar** at **http://localhost:8080/scalar** (Development
+only; the raw OpenAPI spec is at `/openapi/v1.json`, and a copy is committed at
+[openapi.json](openapi.json)). To exercise the endpoints from the browser:
+
+1. Open **http://localhost:8080/scalar**.
+2. First get a token: expand **`POST /api/v1/auth/signup`** (or `login`), fill the request body,
+   and **Send** — copy the `access_token` from the response.
+3. Click **Authentication** (top of the page) and paste the token into the **Bearer** field. Scalar
+   now sends `Authorization: Bearer <token>` on every request.
+4. Pick any operation, fill in the **path/query parameters** or **request body**, and press **Send**
+   to see the live response.
+
+The examples below show, for each endpoint, what you enter in Scalar and the response you get back.
 
 ### Endpoint summary
 
@@ -488,10 +527,6 @@ require a valid JWT (see [Authentication](#10-authentication)); auth endpoints a
 | `GET`  | `/api/v1/movies/genres` | reader+ | Distinct genres |
 | `GET`  | `/api/v1/stats` | **admin** | Dataset statistics |
 
-All endpoints validate inputs (data-annotation validation → RFC 7807 `ValidationProblem`) and map
-domain errors to `application/problem+json` responses via a shared `Result<T>` type. Full request/
-response schemas are in the committed OpenAPI spec.
-
 ---
 
 ### Auth endpoints
@@ -502,13 +537,14 @@ The **first account ever created becomes `admin`**; every subsequent sign-up is 
 Passwords must be ≥ 8 chars with upper, lower, digit and symbol. Returns **201** with a token, or
 **409** if the email is already registered.
 
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/signup \
-  -H "Content-Type: application/json" \
-  -d '{ "email": "john@example.com", "password": "MyPassword123!" }'
+**In Scalar:** select the operation → paste this into the request body → **Send**.
+
+```jsonc
+// Request body
+{ "email": "john@example.com", "password": "MyPassword123!" }
 ```
 ```jsonc
-// 201 Created
+// Response — 201 Created
 { "access_token": "<jwt-token>", "token_type": "Bearer", "expires_in": 3600, "role": "reader" }
 ```
 
@@ -517,41 +553,40 @@ curl -X POST http://localhost:8080/api/v1/auth/signup \
 Returns **200** with a token, or **401** for unknown email *or* wrong password (identical error, so
 account existence is never leaked).
 
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/login \
-  -H "Content-Type: application/json" \
-  -d '{ "email": "john@example.com", "password": "MyPassword123!" }'
+```jsonc
+// Request body
+{ "email": "john@example.com", "password": "MyPassword123!" }
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "access_token": "<jwt-token>", "token_type": "Bearer", "expires_in": 3600, "role": "reader" }
 ```
 
 #### `POST /api/v1/auth/change-password` — rotate password *(any authenticated user)*
 
-Verifies the current password (**400** if wrong), then sets the new one.
+Requires a Bearer token (set it under **Authentication** in Scalar). Verifies the current password
+(**400** if wrong), then sets the new one.
 
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/change-password \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d '{ "current_password": "MyPassword123!", "new_password": "NewPassword123!" }'
+```jsonc
+// Request body
+{ "current_password": "MyPassword123!", "new_password": "NewPassword123!" }
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "message": "Password changed successfully." }
 ```
 
 #### `POST /api/v1/auth/assignadminrole` — promote a user *(admin only)*
 
-**403** for non-admin callers, **404** if the target email does not exist.
+Requires an **admin** Bearer token. **403** for non-admin callers, **404** if the target email does
+not exist.
 
-```bash
-curl -X POST http://localhost:8080/api/v1/auth/assignadminrole \
-  -H "Authorization: Bearer $ADMIN_TOKEN" -H "Content-Type: application/json" \
-  -d '{ "email": "john@example.com" }'
+```jsonc
+// Request body
+{ "email": "john@example.com" }
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "message": "Admin role assigned successfully." }
 ```
 
@@ -561,54 +596,63 @@ curl -X POST http://localhost:8080/api/v1/auth/assignadminrole \
 
 #### `GET /health` — liveness + readiness *(no auth)*
 
-```bash
-curl http://localhost:8080/health
-```
+No parameters — just **Send**.
+
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "status": "Healthy", "dependencies": { "postgres": "Healthy", "mcp-server": "Healthy" } }
 ```
 
 ---
 
-### Movie endpoints *(require a valid JWT)*
+### Movie endpoints *(require a valid JWT — set it under Authentication in Scalar)*
 
 #### `GET /api/v1/movies/search` — natural-language search
 
-Query params: **`query`** (required), `top_k` (default 10, clamped to 50), `genre`,
-`min_imdb_rating`, `mpaa_rating`, `decade`. Results are cached in Redis per query + filters.
+Results are cached in Redis per query + filters.
 
-```bash
-curl -G "http://localhost:8080/api/v1/movies/search" \
-  --data-urlencode "query=sci-fi films directed by James Cameron" \
-  --data-urlencode "top_k=2" \
-  -H "Authorization: Bearer $TOKEN"
+**In Scalar:** fill the query parameters →
+
+| Parameter | Required | Notes |
+|-----------|----------|-------|
+| `query` | yes | Natural-language search text |
+| `top_k` | no | Default 10, clamped to 50 |
+| `genre` | no | Exact genre filter |
+| `min_imdb_rating` | no | Minimum IMDB rating |
+| `mpaa_rating` | no | e.g. `PG-13` |
+| `decade` | no | e.g. `1990` |
+
+```
+// Example request
+GET /api/v1/movies/search?query=space adventure&top_k=2
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 {
-  "query": "sci-fi films directed by James Cameron",
+  "query": "space adventure",
   "count": 2,
   "results": [
-    { "id": "9f1c2d3e-…", "title": "Terminator 2: Judgment Day", "release_year": 1991,
-      "major_genre": "Action", "director": "James Cameron", "imdb_rating": 8.5,
-      "rt_rating": 93, "similarity_score": 0.87 },
-    { "id": "c7b4…", "title": "Aliens", "release_year": 1986, "major_genre": "Action",
-      "director": "James Cameron", "imdb_rating": 8.4, "similarity_score": 0.83 }
+    { "id": "9ddc4d0d-…", "title": "Interstellar", "release_year": 2014,
+      "major_genre": "Adventure", "director": "Christopher Nolan", "imdb_rating": 8.7,
+      "rt_rating": 91, "similarity_score": 0.96 },
+    { "id": "d8c918…", "title": "The Martian", "release_year": 2015,
+      "major_genre": "Adventure", "director": "Ridley Scott", "imdb_rating": 8.0,
+      "rt_rating": 91, "similarity_score": 0.94 }
   ]
 }
 ```
 
 #### `GET /api/v1/movies/{id}` — get movie by ID
 
-Returns the full movie record, or **404** if the id is unknown.
+Enter the movie UUID as the `id` path parameter. Returns the full movie record, or **404** if
+unknown.
 
-```bash
-curl "http://localhost:8080/api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71" \
-  -H "Authorization: Bearer $TOKEN"
+```
+// Example request
+GET /api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71", "title": "Interstellar",
   "release_year": 2014, "major_genre": "Adventure", "director": "Christopher Nolan",
   "distributor": "Paramount Pictures", "mpaa_rating": "PG-13", "imdb_rating": 8.7,
@@ -617,30 +661,30 @@ curl "http://localhost:8080/api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71" 
 
 #### `GET /api/v1/movies/by-title` — get movie by title
 
-Query param `title`. Exact (case-insensitive) match first, then fuzzy substring — same semantics as
-the MCP `get_movie_by_title` tool it calls. Returns the movie record or **404**.
+Enter the `title` query parameter. Exact (case-insensitive) match first, then fuzzy substring —
+same semantics as the MCP `get_movie_by_title` tool it calls. Returns the movie record or **404**.
 
-```bash
-curl -G "http://localhost:8080/api/v1/movies/by-title" \
-  --data-urlencode "title=Interstellar" \
-  -H "Authorization: Bearer $TOKEN"
+```
+// Example request
+GET /api/v1/movies/by-title?title=Interstellar
 ```
 ```jsonc
-// 200 OK
-{ "id": "9ddc4d0d-…", "title": "Interstellar", "release_year": 2014,
+// Response — 200 OK
+{ "id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71", "title": "Interstellar", "release_year": 2014,
   "major_genre": "Adventure", "director": "Christopher Nolan", "imdb_rating": 8.7 }
 ```
 
 #### `GET /api/v1/movies/{id}/similar` — similar movies
 
-Query param `top_k` (default 5, clamped to 50). Returns **404** if the source id is unknown.
+Enter the source movie's `id` path parameter and optional `top_k` (default 5, clamped to 50).
+Returns **404** if the source id is unknown.
 
-```bash
-curl "http://localhost:8080/api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71/similar?top_k=2" \
-  -H "Authorization: Bearer $TOKEN"
+```
+// Example request
+GET /api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71/similar?top_k=2
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 {
   "source_id": "9ddc4d0d-acde-45b1-8f32-a22fd9134d71",
   "results": [
@@ -652,11 +696,14 @@ curl "http://localhost:8080/api/v1/movies/9ddc4d0d-acde-45b1-8f32-a22fd9134d71/s
 
 #### `GET /api/v1/movies/genres` — list genres
 
-```bash
-curl http://localhost:8080/api/v1/movies/genres -H "Authorization: Bearer $TOKEN"
+No parameters — just **Send**.
+
+```
+// Example request
+GET /api/v1/movies/genres
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "genres": ["Action", "Adventure", "Comedy", "Drama", "Horror", "Musical", "Thriller", "Western"] }
 ```
 
@@ -666,13 +713,14 @@ curl http://localhost:8080/api/v1/movies/genres -H "Authorization: Bearer $TOKEN
 
 #### `GET /api/v1/stats` — dataset statistics *(admin only)*
 
-**403** for non-admin callers.
+Requires an **admin** Bearer token; **403** for non-admin callers. No parameters.
 
-```bash
-curl http://localhost:8080/api/v1/stats -H "Authorization: Bearer $ADMIN_TOKEN"
+```
+// Example request
+GET /api/v1/stats
 ```
 ```jsonc
-// 200 OK
+// Response — 200 OK
 { "total_movies": 3201, "with_embeddings": 3201, "genres": 12,
   "year_range": [1915, 2010], "avg_imdb_rating": 6.28, "pipeline_version": "0.1.0" }
 ```
