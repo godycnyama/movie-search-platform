@@ -1,4 +1,4 @@
-# 🎬 Intelligent Movie Search Platform
+# Movie Search Platform
 
 An end-to-end semantic movie-search platform built on the **Vega movies dataset**: a Python **data
 pipeline** that cleans, imputes, augments and embeds the catalogue; a **PostgreSQL 16 + pgvector**
@@ -6,18 +6,6 @@ store; a **Python FastMCP server** exposing semantic-search tools; and a secure,
 **.NET 10 Web API** for end users — all orchestrated locally with **Docker Compose** and deployable
 to **AWS via Terraform**.
 
-> **Project status — core implemented, deployment pending.**
-> ✅ **Done:** [docker-compose.yml](docker-compose.yml) (11 services), the full data pipeline
-> ([pipeline/](pipeline/)), Alembic migrations ([database/migrations/](database/migrations/)), the
-> FastMCP server ([mcp-server/](mcp-server/)), the .NET 10 API
-> ([api/](api/) — endpoints served through the MCP server, JWT auth, Redis caching, OpenTelemetry),
-> and the monitoring configs ([monitoring/](monitoring/)).
-> ✅ Also done: **Terraform** (AWS ECS Fargate — [terraform/](terraform/)), **CI/CD**
-> ([.github/workflows/](.github/workflows/)), **pytest suites** for the pipeline and MCP server,
-> the **k6 load test** ([scripts/load_test.js](scripts/load_test.js)), and Prometheus metrics on
-> both services. This README follows the structure required by the technical assessment brief.
-
----
 
 ## Table of Contents
 
@@ -80,34 +68,6 @@ C# SDK over SSE, one tool call per endpoint — see
 query embedding and pgvector search happen inside the MCP server. The API touches Postgres
 directly only for its own `users` table (auth). The same MCP tools remain consumable by any other
 MCP client (LLM agents, MCP Inspector).
-
-### Repository layout
-
-```
-movie-search-platform/
-├── README.md                 # This file
-├── docker-compose.yml        # Local orchestration (11 services)             ✅ committed
-├── .env.example              # Environment template                          ✅ committed
-├── pipeline/                 # Part 1 — data pipeline (Python + uv)          ✅ implemented
-│   ├── src/pipeline/         #   cleaning · imputation · augmentation · embedding · loader
-│   ├── src/models.py         #   shared SQLModel entity (Movie)
-│   ├── alembic.ini           #   migration config (versions live in database/migrations)
-│   └── Dockerfile            #   runs `alembic upgrade head` then the pipeline
-├── database/migrations/      # Part 2 — Alembic migrations                   ✅ implemented
-│   └── versions/…initial_schema.py   # movies + users tables, pgvector, HNSW index
-├── mcp-server/               # Part 3 — FastMCP server (Python + uv)         ✅ implemented
-│   ├── src/server/           #   tools · db · embeddings · asgi · logging
-│   └── Dockerfile
-├── api/MovieSearch/          # Part 4 — .NET 10 Web API (MCP client)         ✅ implemented
-│   ├── src/{Domain,Application,Infrastructure,Api}/   # layered solution (.slnx)
-│   └── src/Api/Dockerfile
-├── monitoring/               # prometheus.yml · Grafana provisioning + dashboard  ✅ committed
-├── scripts/                  # Atlas export + k6 load test                   ✅ implemented
-├── terraform/                # Part 6 — AWS ECS Fargate IaC (see §12)        ✅ implemented
-└── .github/workflows/        # ci.yml, cd.yml (see §12-13)                   ✅ implemented
-```
-
----
 
 ## 2. Prerequisites
 
