@@ -85,8 +85,6 @@ Exact versions the platform targets:
 | AWS CLI | **v2** | Authenticated to the target account (SSO or named profile) |
 | k6 | latest | Only for the load test ([scripts/load_test.js](scripts/load_test.js), §13) |
 
-> All tools should be installed from official sources, and new project dependencies should go through
-> the organisation's approved dependency-vetting process before use.
 
 ---
 
@@ -141,7 +139,6 @@ Local URLs when running via Docker Compose (ports per [docker-compose.yml](docke
 | Prometheus | http://localhost:9090 | Metrics collection |
 | Grafana | http://localhost:3000 | Dashboards (admin login from `.env`) |
 | Jaeger UI | http://localhost:16686 | Distributed traces (OTLP in on 4317/4318) |
-| Embedding Atlas (bonus) | http://localhost:7000 | Embedding visualization — ⚠️ not implemented |
 
 ---
 
