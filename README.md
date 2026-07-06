@@ -869,7 +869,3 @@ a manual approval on the `production` GitHub environment.
 - HTTPS on the ALB (provide `acm_certificate_arn` once a domain/cert exists) and a Route53 alias.
 - Ship the local Grafana dashboard to the AWS environments (Amazon Managed Grafana or
   container-based) — CloudWatch alarms cover the basics today.
-
----
-
-> Maintainers: ⚠️ **PLACEHOLDER** · License: ⚠️ **PLACEHOLDER**
