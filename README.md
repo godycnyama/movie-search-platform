@@ -853,11 +853,37 @@ cd api/MovieSearch && dotnet test             # .NET — xUnit
 
 ### Load test (p95 < 500ms SLO)
 
-```bash
-# Signs up its own throwaway users, then mixes search / by-id / similar / genres.
-# Thresholds fail the run if p95 >= 500ms or the error rate exceeds 1%.
-k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080
+The load test is driven by [k6](https://k6.io), which must be installed on the machine first.
+On Windows, install it with winget:
+
+```powershell
+winget install k6 --source winget
 ```
+
+Confirm the install succeeded:
+
+```powershell
+k6 --version
+```
+
+Bring up the whole platform so the API (and its MCP/DB/Redis dependencies) is running. From the
+root of the repo:
+
+```bash
+docker compose up
+```
+
+Confirm the API is up by opening <http://localhost:8080/scalar/> in a browser.
+
+Then, from the root of the repo, run the load test:
+
+```powershell
+k6 run .\scripts\load_test.js
+```
+
+The results are printed when the run completes. The script signs up its own throwaway users, then
+mixes the movie read endpoints (semantic search / by-title / genres). Thresholds fail the run if
+p95 >= 500ms or the error rate exceeds 1%.
 
 ### Linting & static analysis
 

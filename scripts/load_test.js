@@ -3,9 +3,19 @@
 //   k6 run scripts/load_test.js -e BASE_URL=http://localhost:8080
 //
 // The script signs up its own throwaway account (or logs in with EMAIL/PASSWORD
-// if provided), then mixes the read endpoints the way a search UI would:
-// mostly semantic search, plus by-id detail fetches from real result ids,
-// genres and by-title lookups.
+// if provided), then mixes the *movie* read endpoints the way a search UI would.
+// It mirrors scripts/load_test.py:
+//
+//   * Only movie endpoints are exercised.
+//   * Endpoints that take an {id} path parameter are skipped
+//     (/movies/{id} and /movies/{id}/similar).
+//   * Auth and user endpoints are NOT load tested -- auth is used only to obtain
+//     a token so the movie endpoints can be reached.
+//
+// Tested endpoints:
+//   GET /api/v1/movies/search    ?query=&top_k=&genre=&min_imdb_rating=&decade=
+//   GET /api/v1/movies/by-title  ?title=
+//   GET /api/v1/movies/genres
 //
 // Options:
 //   -e BASE_URL=...   target (default http://localhost:8080)
@@ -36,6 +46,7 @@ export const options = {
   },
 };
 
+// Natural-language queries the semantic search endpoint is designed to answer.
 const QUERIES = [
   "action movies from the 90s with high IMDB ratings",
   "critically acclaimed drama films with small budgets",
@@ -47,9 +58,20 @@ const QUERIES = [
   "independent horror movies",
 ];
 
-const TITLES = ["terminator", "toy story", "alien", "heat", "titanic"];
+// Titles likely to exist in the catalogue; a 404 is still a valid outcome.
+const TITLES = ["terminator", "toy story", "alien", "heat", "titanic", "the matrix", "jaws"];
 
-// One token per VU, created during the first iteration.
+// Optional structured filters mixed into a fraction of search calls. These map
+// straight onto the columns in the movies table (major_genre, imdb_rating,
+// mpaa_rating, decade).
+const FILTER_GENRES = ["Action", "Drama", "Comedy", "Horror", "Adventure", "Thriller"];
+const MPAA_RATINGS = ["G", "PG", "PG-13", "R"];
+const DECADES = [1980, 1990, 2000, 2010];
+
+function pick(arr) {
+  return arr[Math.floor(Math.random() * arr.length)];
+}
+
 export function setup() {
   // Nothing shared: each VU authenticates itself (tokens are per-user and the
   // rate limiter partitions on the JWT sub claim).
@@ -67,8 +89,11 @@ function authenticate() {
     return res.json("access_token");
   }
 
-  const email = `k6-vu${__VU}-${Date.now()}@example.com`;
-  const password = `LoadTest!${Date.now()}vu${__VU}`;
+  // Throwaway account. Password satisfies the API's complexity policy
+  // (>=8 chars, upper, lower, digit, special).
+  const unique = `${Date.now()}${Math.floor(Math.random() * 9000 + 1000)}`;
+  const email = `loadtest-vu${__VU}-${unique}@example.com`;
+  const password = `LoadTest!${unique}`;
   const res = http.post(
     `${API}/auth/signup`,
     JSON.stringify({ email, password }),
@@ -76,6 +101,62 @@ function authenticate() {
   );
   check(res, { "signup succeeded": (r) => r.status === 200 || r.status === 201 });
   return res.json("access_token");
+}
+
+// Encode a query string, dropping keys whose value is null/undefined.
+function qs(params) {
+  return Object.keys(params)
+    .filter((k) => params[k] !== null && params[k] !== undefined)
+    .map((k) => `${encodeURIComponent(k)}=${encodeURIComponent(params[k])}`)
+    .join("&");
+}
+
+function callSearch(auth) {
+  const params = { query: pick(QUERIES), top_k: 10 };
+  // ~40% of searches carry a structured filter, exercising the WHERE clauses.
+  if (Math.random() < 0.4) {
+    const roll = Math.random();
+    if (roll < 0.35) {
+      params.genre = pick(FILTER_GENRES);
+    } else if (roll < 0.6) {
+      params.min_imdb_rating = Math.round((Math.random() * 2.5 + 6.0) * 10) / 10;
+    } else if (roll < 0.8) {
+      params.decade = pick(DECADES);
+    } else {
+      params.mpaa_rating = pick(MPAA_RATINGS);
+    }
+  }
+  const res = http.get(
+    `${API}/movies/search?${qs(params)}`,
+    Object.assign({ tags: { endpoint: "search" } }, auth)
+  );
+  const ok = check(res, {
+    "search 200": (r) => r.status === 200,
+    "search has results": (r) => (r.json("count") || 0) >= 0,
+  });
+  errors.add(!ok);
+}
+
+function callByTitle(auth) {
+  const res = http.get(
+    `${API}/movies/by-title?${qs({ title: pick(TITLES) })}`,
+    Object.assign({ tags: { endpoint: "by-title" } }, auth)
+  );
+  // A missing title is a legitimate 404, not a load-test failure.
+  errors.add(!check(res, { "by-title 200/404": (r) => r.status === 200 || r.status === 404 }));
+}
+
+function callGenres(auth) {
+  const res = http.get(`${API}/movies/genres`, Object.assign({ tags: { endpoint: "genres" } }, auth));
+  errors.add(!check(res, { "genres 200": (r) => r.status === 200 }));
+}
+
+// Weighted mix: search is the endpoint the SLO is really about.
+function pickEndpoint() {
+  const roll = Math.random();
+  if (roll < 0.7) return callSearch;
+  if (roll < 0.9) return callByTitle;
+  return callGenres;
 }
 
 let token = null;
@@ -86,47 +167,9 @@ export default function () {
   }
   const auth = { headers: { Authorization: `Bearer ${token}` } };
 
-  // 60%: semantic search — the endpoint the SLO is really about.
-  const query = QUERIES[Math.floor(Math.random() * QUERIES.length)];
-  const search = http.get(
-    `${API}/movies/search?q=${encodeURIComponent(query)}&top_k=10`,
-    Object.assign({ tags: { endpoint: "search" } }, auth)
-  );
-  const searchOk = check(search, {
-    "search 200": (r) => r.status === 200,
-    "search has results": (r) => (r.json("count") || 0) >= 0,
-  });
-  errors.add(!searchOk);
+  pickEndpoint()(auth);
 
-  // 20%: detail + similar for a real id from the results.
-  const results = searchOk ? search.json("results") || [] : [];
-  if (results.length > 0 && Math.random() < 0.5) {
-    const id = results[Math.floor(Math.random() * results.length)].id;
-
-    const detail = http.get(`${API}/movies/${id}`, Object.assign({ tags: { endpoint: "by-id" } }, auth));
-    errors.add(!check(detail, { "detail 200": (r) => r.status === 200 }));
-
-    const similar = http.get(
-      `${API}/movies/${id}/similar?top_k=5`,
-      Object.assign({ tags: { endpoint: "similar" } }, auth)
-    );
-    errors.add(!check(similar, { "similar 200": (r) => r.status === 200 }));
-  }
-
-  // 20%: genres + by-title.
-  if (Math.random() < 0.4) {
-    const genres = http.get(`${API}/movies/genres`, Object.assign({ tags: { endpoint: "genres" } }, auth));
-    errors.add(!check(genres, { "genres 200": (r) => r.status === 200 }));
-
-    const title = TITLES[Math.floor(Math.random() * TITLES.length)];
-    const byTitle = http.get(
-      `${API}/movies/by-title?title=${encodeURIComponent(title)}`,
-      Object.assign({ tags: { endpoint: "by-title" } }, auth)
-    );
-    errors.add(!check(byTitle, { "by-title 200/404": (r) => r.status === 200 || r.status === 404 }));
-  }
-
-  // ~2.8 requests/iteration on average; 3s pacing keeps each VU (= one user)
-  // under the API's 60 req/min per-user rate limit so 429s don't skew latency.
+  // 3s pacing keeps each VU (= one user) under the API's 60 req/min per-user
+  // rate limit so 429s don't skew latency.
   sleep(3);
 }
