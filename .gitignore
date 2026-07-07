@@ -39,3 +39,5 @@ crash.log
 *.tfstate.*
 backend.hcl
 .terraform.lock.hcl
+# Local backend override files — must never reach CI/CD (it uses the S3 backend).
+*_override.tf
