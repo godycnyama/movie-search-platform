@@ -24,7 +24,7 @@ provider "aws" {
     tags = {
       Project     = "movie-search"
       Environment = "dev"
-      ManagedBy   = "terraform"
+      ManagedBy   = "Christians"
     }
   }
 }
