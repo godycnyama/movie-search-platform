@@ -36,6 +36,8 @@ def main() -> None:
         format="%(asctime)s %(levelname)s %(name)s: %(message)s",
     )
 
+    started_at = datetime.now(UTC)
+
     # Transform: clean -> impute -> augment.
     raw = data.movies()
     logger.info("Loaded %d raw rows from the Vega movies dataset", len(raw))
@@ -52,7 +54,7 @@ def main() -> None:
     logger.info("Transformed %d rows (%s)", len(df), cleaning_report)
 
     # Embed + load in batches. (Schema is applied beforehand by
-    # `alembic upgrade head` — see the pipeline Dockerfile CMD.)
+    # `alembic upgrade head`)
     engine = create_db_engine(settings.database_url)
     client = create_embeddings_provider(settings)
 
@@ -71,6 +73,19 @@ def main() -> None:
         client.close()
 
     logger.info("Pipeline complete: %d movies embedded and loaded", written)
+
+    completed_at = datetime.now(UTC)
+    _emit_summary({
+        "generated_at": completed_at.isoformat(),
+        "pipeline_version": settings.pipeline_version,
+        "duration_seconds": round((completed_at - started_at).total_seconds(), 1),
+        "embedding_model": settings.embedding_model,
+        "embedding_dim": settings.embedding_dim,
+        "raw_rows": int(len(raw)),
+        "loaded_rows": int(written),
+        "cleaning": cleaning_report,
+        "imputation": imputation_report,
+    })
 
 
 def _to_movie(row: pd.Series, embedding: list[float], pipeline_version: str) -> Movie:
@@ -118,6 +133,48 @@ def _write_report(report: dict) -> None:
     path = LOGS_DIR / "cleaning_report.json"
     path.write_text(json.dumps(report, indent=2))
     logger.info("Cleaning report written to %s", path)
+
+
+def _emit_summary(summary: dict) -> None:
+    """Emit the final run summary to BOTH a log file and stdout (README §5).
+
+    The JSON file is machine-readable and mounted to the host; the stdout block
+    is the human-facing report a `docker compose run pipeline` operator sees.
+    """
+    LOGS_DIR.mkdir(parents=True, exist_ok=True)
+    path = LOGS_DIR / "pipeline_summary.json"
+    path.write_text(json.dumps(summary, indent=2))
+    logger.info("Pipeline summary written to %s", path)
+
+    cleaning = summary["cleaning"]
+    nulled = sum(v for k, v in cleaning.items() if k.startswith("invalid_"))
+    imputed = sum(v for k, v in summary["imputation"].items() if k.startswith("imputed_"))
+
+    report = "\n".join([
+        "",
+        "=" * 62,
+        "  PIPELINE SUMMARY",
+        "=" * 62,
+        f"  pipeline version    : {summary['pipeline_version']}",
+        f"  completed at        : {summary['generated_at']}",
+        f"  duration            : {summary['duration_seconds']}s",
+        f"  embedding model     : {summary['embedding_model']} ({summary['embedding_dim']}-dim)",
+        "-" * 62,
+        f"  raw rows            : {summary['raw_rows']}",
+        f"  dropped (no title)  : {cleaning.get('dropped_missing_title', 0)}",
+        f"  duplicates removed  : {cleaning.get('duplicates_removed', 0)}",
+        f"  invalid values null : {nulled}",
+        f"  fields imputed      : {imputed}",
+        f"  cleaned rows        : {cleaning.get('rows_out', 'n/a')}",
+        f"  movies loaded       : {summary['loaded_rows']}  (idempotent upsert)",
+        "-" * 62,
+        f"  reports: {LOGS_DIR / 'cleaning_report.json'}",
+        f"           {path}",
+        "=" * 62,
+        "",
+    ])
+    # print() -> stdout, independent of the logging stream (which is stderr).
+    print(report, flush=True)
 
 
 if __name__ == "__main__":
