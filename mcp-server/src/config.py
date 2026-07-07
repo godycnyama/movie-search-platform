@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     )
 
     embedding_model: str = Field(
-        default="nomic-embed-text-v1.5",
+        default="BAAI/bge-base-en-v1.5",
         description="Embedding model label; MUST be the same model the pipeline embedded with.",
     )
 

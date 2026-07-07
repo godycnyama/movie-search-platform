@@ -11,7 +11,7 @@ DIM = 4
 
 def make_client(handler) -> TeiEmbeddingsClient:
     """Client whose HTTP layer is replaced with an in-memory mock transport."""
-    client = TeiEmbeddingsClient("http://embeddings.test", "nomic-embed-text-v1.5", DIM)
+    client = TeiEmbeddingsClient("http://embeddings.test", "BAAI/bge-base-en-v1.5", DIM)
     client._client = httpx.Client(
         base_url="http://embeddings.test", transport=httpx.MockTransport(handler)
     )

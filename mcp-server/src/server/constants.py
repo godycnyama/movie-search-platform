@@ -12,7 +12,7 @@ import os
 
 EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 """Embedding dimensionality — must match the pgvector ``vector(N)`` column and the
-active embedding model (local nomic-embed-text = 768; AWS Bedrock Titan Text
+active embedding model (local bge-base-en-v1.5 = 768; AWS Bedrock Titan Text
 Embeddings V2 = 1024). Query and document embeddings must use the same model per
 environment or cosine similarity is meaningless."""
 

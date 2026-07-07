@@ -49,7 +49,7 @@ class PipelineSettings(BaseSettings):
     )
 
     embedding_model: str = Field(
-        default="nomic-embed-text-v1.5",
+        default="BAAI/bge-base-en-v1.5",
         description="Embedding model label; must produce embedding_dim-sized vectors.",
     )
 

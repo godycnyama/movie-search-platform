@@ -9,7 +9,7 @@ DIM = 4
 
 
 def make_client(handler) -> TeiEmbeddingsClient:
-    client = TeiEmbeddingsClient("http://embeddings.test", "nomic-embed-text-v1.5", DIM)
+    client = TeiEmbeddingsClient("http://embeddings.test", "BAAI/bge-base-en-v1.5", DIM)
     client._client = httpx.AsyncClient(
         base_url="http://embeddings.test", transport=httpx.MockTransport(handler)
     )

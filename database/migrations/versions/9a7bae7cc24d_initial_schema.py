@@ -21,7 +21,7 @@ branch_labels: Union[str, Sequence[str], None] = None
 depends_on: Union[str, Sequence[str], None] = None
 
 # The embedding column is sized to the active model, which varies per environment
-# (local nomic-embed-text = 768; AWS Bedrock Titan Text Embeddings V2 = 1024). The
+# (local bge-base-en-v1.5 = 768; AWS Bedrock Titan Text Embeddings V2 = 1024). The
 # pipeline/MCP server read the same EMBEDDING_DIM so the column, index, and vectors
 # all agree. Each environment has its own database, so a fresh `upgrade head` sizes
 # it correctly; changing the dimension of an existing populated database requires a

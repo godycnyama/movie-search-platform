@@ -32,7 +32,7 @@ def test_factory_builds_tei_for_local():
     settings = PipelineSettings(
         env="local",
         embeddings_url="http://embeddings.test:8001",
-        embedding_model="nomic-embed-text-v1.5",
+        embedding_model="BAAI/bge-base-en-v1.5",
         embedding_dim=768,
     )
 

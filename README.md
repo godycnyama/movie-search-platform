@@ -46,7 +46,7 @@ to **AWS via Terraform**.
                               ▼                            ▼              ▼
         ┌───────────────────────────────────────────┐    ┌───────────────────────────┐
         │     PostgreSQL 16 + pgvector (:5432)       │    │  TEI embeddings (:8001)    │
-        │  movies: metadata + augmented_text +       │    │  nomic-embed-text 768-dim  │
+        │  movies: metadata + augmented_text +       │    │  bge-base-en-v1.5 768-dim  │
         │  vector(768) · HNSW cosine index · users   │    │  (loaded on first start)   │
         └────────────────────▲──────────────────────┘    └────────────▲──────────────┘
                              │ alembic upgrade head + upsert           │ /embed
@@ -110,7 +110,7 @@ docker compose run --rm pipeline
 curl http://localhost:8080/health
 ```
 
-On first start the `embeddings` (TEI) service downloads and loads the `nomic-embed-text-v1.5`
+On first start the `embeddings` (TEI) service downloads and loads the `BAAI/bge-base-en-v1.5`
 model before the pipeline and MCP server come up (cold start ~1–2 min depending on bandwidth);
 compose gates both on its `/health` check.
 
@@ -133,7 +133,7 @@ Local URLs when running via Docker Compose (ports per [docker-compose.yml](docke
 | API — metrics | http://localhost:8080/metrics | Prometheus metrics (OTel exporter) |
 | MCP Server | http://localhost:8000/sse | FastMCP endpoint (SSE) for MCP clients |
 | MCP — health | http://localhost:8000/health | MCP health check |
-| Embedding Service (TEI) | http://localhost:8001 | HuggingFace TEI serving nomic-embed-text-v1.5, 768-dim — local embedding backend for the pipeline & MCP server |
+| Embedding Service (TEI) | http://localhost:8001 | HuggingFace TEI serving BAAI/bge-base-en-v1.5, 768-dim — local embedding backend for the pipeline & MCP server |
 | PostgreSQL + pgvector | postgresql://localhost:5432 | Primary datastore (movies + users) |
 | Redis | redis://localhost:6379 | API query-result cache (password from `.env`) |
 | Prometheus | http://localhost:9090 | Metrics collection |
@@ -165,7 +165,7 @@ and prepares it for vector search through modular stages:
    (see [Embedding Strategy](#7-embedding-strategy)) and derive **`budget_tier`**, **`decade`** and
    **`blockbuster_flag`**.
 4. **Embed** ([embedding.py](pipeline/src/pipeline/embedding.py)) — call the **TEI embeddings
-   service** (`nomic-embed-text-v1.5`, 768-dim) over the network in configurable batches.
+   service** (`BAAI/bge-base-en-v1.5`, 768-dim) over the network in configurable batches.
 5. **Load** ([loader.py](pipeline/src/pipeline/loader.py)) — **idempotent upsert** into pgvector:
    movie IDs are deterministic (derived from title + release date), so re-running updates in place
    and never creates duplicates.
@@ -248,11 +248,12 @@ extension, and the API's `users` table.
 
 ### Model choice & rationale
 
-- **Model:** **`nomic-embed-text-v1.5`**, **768 dimensions**, served by **HuggingFace Text
+- **Model:** **`BAAI/bge-base-en-v1.5`**, **768 dimensions**, served by **HuggingFace Text
   Embeddings Inference (TEI)** in its own container — no in-process model download and no
   paid/hosted API. TEI downloads and loads the model once on first start, then exposes it over HTTP.
-- **Why:** strong retrieval quality for its size, fully open and locally runnable, and long context
-  that comfortably fits the augmented movie text. It keeps all data in-house.
+- **Why:** strong retrieval quality for its size (a top MTEB performer in the base tier), fully open
+  and locally runnable, and a context window that comfortably fits the augmented movie text. It keeps
+  all data in-house.
 - **Dimensionality:** **768**. The pgvector column is declared `vector(768)` and `EMBEDDING_DIM=768`
   in [.env.example](.env.example) — the column and model **must** agree or loads fail.
 - The API itself never embeds — its search queries are embedded by the MCP server.
@@ -261,8 +262,8 @@ extension, and the API's `users` table.
 
 ```yaml
 embeddings:                # local backend — pipeline & MCP server embed via http://embeddings:8001
-  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.5
-  command: ["--model-id", "nomic-ai/nomic-embed-text-v1.5", "--port", "8001"]
+  image: ghcr.io/huggingface/text-embeddings-inference:cpu-1.9
+  command: ["--model-id", "BAAI/bge-base-en-v1.5", "--port", "8001"]
   healthcheck: ...         # /health goes healthy once the model is loaded
 ```
 
@@ -923,7 +924,7 @@ a manual approval on the `production` GitHub environment.
   enforces fmt/validate, but the first apply (see [terraform/README.md](terraform/README.md))
   should be shepherded, and the deploy role's IAM policy reviewed by Security first.
 - Locally, the pipeline and MCP server both embed via the single **TEI** `embeddings` service
-  (`nomic-embed-text-v1.5`, 768-dim); the AWS stack swaps this for **Amazon Bedrock** (`ENV`
+  (`BAAI/bge-base-en-v1.5`, 768-dim); the AWS stack swaps this for **Amazon Bedrock** (`ENV`
   drives dev/prod → Bedrock), so there is no in-cluster inference in the cloud.
 - TEI downloads model weights on first start (cold start ~1–2 min locally, cached in the
   `model-cache` volume thereafter); healthchecks gate dependents until the model is loaded.

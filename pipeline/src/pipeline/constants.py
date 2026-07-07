@@ -15,7 +15,7 @@ import uuid
 EMBEDDING_DIM = int(os.environ.get("EMBEDDING_DIM", "768"))
 """Embedding dimensionality — must match the pgvector ``vector(N)`` column and the
 active embedding model. Env-driven because the model varies per environment
-(local nomic-embed-text = 768; AWS Bedrock Titan Text Embeddings V2 = 1024). The
+(local bge-base-en-v1.5 = 768; AWS Bedrock Titan Text Embeddings V2 = 1024). The
 Alembic migration reads the same ``EMBEDDING_DIM`` so the column is sized to match."""
 
 
