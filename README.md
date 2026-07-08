@@ -848,7 +848,12 @@ and push to master:
 - **mcp-server** (pytest) — all six tools exercised end to end through FastMCP's **in-memory MCP
   client** (schemas, structured output, and error mapping included) against fake db/embeddings
   backends, plus the `/health` and `/metrics` HTTP routes.
-- **api** (xUnit, `tests/Tests`) — MCP tool-result decoding and the password hasher.
+- **api** (xUnit, `tests/Tests`) — unit tests for MCP tool-result decoding and the password hasher,
+  plus in-memory integration tests (`WebApplicationFactory<Program>`) that boot the real API and
+  assert the request-pipeline wiring: the `/health` response contract and JWT authorization (a
+  protected endpoint returns `401` without a token). These deliberately run without external
+  infrastructure — dependencies report unhealthy under test — so they cover routing/auth/health
+  wiring, not the full API → MCP server → pgvector path (see §14).
 
 ### Unit tests
 
