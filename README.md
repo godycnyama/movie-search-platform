@@ -924,8 +924,7 @@ a manual approval on the `production` GitHub environment.
   MCP tool calls, so if the MCP server is down those endpoints fail (auth and cached responses
   still work). The API `/health` surfaces this as the `mcp-server` dependency.
 - The API↔MCP hop adds a network round-trip per uncached read (Redis response caching in the
-  handlers absorbs repeat queries); run the k6 load test (§13) against a loaded stack to validate
-  the p95 < 500ms SLO on your hardware.
+  handlers absorbs repeat queries)
 - The AWS stacks have not been applied to a real account yet — `terraform validate` passes and CI
   enforces fmt/validate, but the first apply (see [terraform/README.md](terraform/README.md))
   should be shepherded, and the deploy role's IAM policy reviewed by Security first.
@@ -945,9 +944,6 @@ a manual approval on the `production` GitHub environment.
 - Cache-TTL tuning.
 - Hybrid search (vector similarity + full-text/metadata filters) with re-ranking.
 - Tune the pgvector **HNSW** index (`m`, `ef_search`) and benchmark recall vs. latency at scale.
-- HTTPS on the ALB (provide `acm_certificate_arn` once a domain/cert exists) and a Route53 alias.
-- Ship the local Grafana dashboard to the AWS environments (Amazon Managed Grafana or
-  container-based) — CloudWatch alarms cover the basics today.
 - Deploy the data pipeline to AWS via **SageMaker Pipelines** — the pipeline stages would run as
   scripts (processing steps) rather than the Docker container used locally. Today the pipeline is
   run locally against the target database (§12).
