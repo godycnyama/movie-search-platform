@@ -84,7 +84,7 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx" {
 
 resource "aws_cloudwatch_metric_alarm" "alb_unhealthy_hosts" {
   alarm_name          = "${var.name_prefix}-alb-unhealthy-hosts"
-  alarm_description   = "One or more API targets failing the /health check."
+  alarm_description   = "One or more API targets failing the /health/ready check."
   namespace           = "AWS/ApplicationELB"
   metric_name         = "UnHealthyHostCount"
   statistic           = "Maximum"

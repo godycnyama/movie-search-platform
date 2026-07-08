@@ -73,7 +73,10 @@ resource "aws_ecs_task_definition" "api" {
       ]
 
       healthCheck = {
-        command     = ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+        # Liveness: replace only genuinely dead tasks. A transient dependency outage
+        # must not trigger a restart storm — the ALB target group uses /health/ready
+        # to drain traffic from a task whose dependencies are down.
+        command     = ["CMD-SHELL", "curl -fsS http://localhost:8080/health/live || exit 1"]
         interval    = 15
         timeout     = 5
         retries     = 5

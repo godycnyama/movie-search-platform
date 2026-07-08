@@ -13,17 +13,28 @@ namespace MovieSearch.Tests.IntegrationTests;
 public sealed class HealthEndpointTests(ApiFactory factory) : IClassFixture<ApiFactory>
 {
     [Fact]
-    public async Task Health_endpoint_returns_the_health_contract()
+    public async Task Readiness_endpoint_returns_the_health_contract()
     {
         var client = factory.CreateClient();
 
-        var response = await client.GetAsync("/health");
+        var response = await client.GetAsync("/health/ready");
         var body = await response.Content.ReadFromJsonAsync<JsonElement>();
 
         // Shape matches HealthResponse: overall status + per-dependency statuses.
         body.TryGetProperty("status", out _).ShouldBeTrue();
         body.TryGetProperty("dependencies", out var dependencies).ShouldBeTrue();
         dependencies.TryGetProperty("postgres", out _).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task Liveness_endpoint_reports_the_process_is_up()
+    {
+        var client = factory.CreateClient();
+
+        // Liveness runs no dependency checks, so it is Healthy even when Postgres/MCP are unreachable.
+        var response = await client.GetAsync("/health/live");
+
+        response.StatusCode.ShouldBe(HttpStatusCode.OK);
     }
 
     [Fact]

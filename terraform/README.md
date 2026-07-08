@@ -17,7 +17,7 @@ terraform/
 │   ├── secrets/       # generated credentials in Secrets Manager
 │   ├── rds/           # PostgreSQL 16 + pgvector, private subnets only
 │   ├── elasticache/   # Redis 7 (AUTH + TLS), allkeys-lru
-│   ├── alb/           # public ALB, /health target group, optional HTTPS
+│   ├── alb/           # public ALB, /health/ready target group, optional HTTPS
 │   ├── compute/       # ECS Fargate cluster, Cloud Map, task defs, services, autoscaling
 │   ├── iam/           # GitHub OIDC provider + deploy role
 │   └── monitoring/    # CloudWatch alarms -> SNS

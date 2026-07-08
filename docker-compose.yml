@@ -218,7 +218,8 @@ services:
     ports:
       - "${API_PORT:-8080}:8080"
     healthcheck:
-      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health || exit 1"]
+      # Readiness: only report healthy once Postgres + MCP dependencies are reachable.
+      test: ["CMD-SHELL", "curl -fsS http://localhost:8080/health/ready || exit 1"]
       interval: 15s
       timeout: 5s
       retries: 10

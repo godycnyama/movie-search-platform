@@ -115,9 +115,6 @@ app.MapCarter();
 // Skipped from rate limiting so scrapers can't be starved by a noisy neighbour.
 app.MapPrometheusScrapingEndpoint().DisableRateLimiting();
 
-// Liveness/readiness probe.
-// Emits the HealthResponse contract: overall status + per-dependency status.
-// Skipped from rate limiting/timeouts so probes always get a fast, unmetered answer.
 app.MapHealthChecks("/health/live", new HealthCheckOptions
 {
     Predicate = _ => false // no dependency checks, just "is the process running"

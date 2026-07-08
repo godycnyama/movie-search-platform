@@ -75,7 +75,7 @@ module "alb" {
   public_subnet_ids   = module.networking.public_subnet_ids
   security_group_id   = module.networking.alb_security_group_id
   target_port         = 8080
-  health_check_path   = "/health"
+  health_check_path   = "/health/ready" # gate traffic on dependency readiness
   acm_certificate_arn = var.acm_certificate_arn
 }
 

@@ -106,8 +106,8 @@ docker compose up --build -d
 #    To re-run it manually:
 docker compose run --rm pipeline
 
-# 5. Verify the API is healthy
-curl http://localhost:8080/health
+# 5. Verify the API is healthy (readiness = dependencies up; /health/live is a bare liveness probe)
+curl http://localhost:8080/health/ready
 ```
 
 On first start the `embeddings` (TEI) service downloads and loads the `BAAI/bge-base-en-v1.5`
@@ -128,7 +128,8 @@ Local URLs when running via Docker Compose (ports per [docker-compose.yml](docke
 |---------|-----|---------|
 | .NET 10 API | http://localhost:8080 | Public-facing search API |
 | API — OpenAPI spec | http://localhost:8080/openapi/v1.json | OpenAPI spec (Development environment only) |
-| API — health | http://localhost:8080/health | Liveness/readiness probe (reports per-dependency status) |
+| API — liveness | http://localhost:8080/health/live | Bare liveness probe (process up; no dependency checks) — ECS container check |
+| API — readiness | http://localhost:8080/health/ready | Readiness probe (reports per-dependency status) — ALB + Compose health check |
 | API — metrics | http://localhost:8080/metrics | Prometheus metrics (OTel exporter) |
 | MCP Server | http://localhost:8000/sse | FastMCP endpoint (SSE) for MCP clients |
 | MCP — health | http://localhost:8000/health | MCP health check |
@@ -520,7 +521,8 @@ The examples below show, for each endpoint, what you enter in Scalar and the res
 
 | Method | Path | Auth | Purpose |
 |--------|------|------|---------|
-| `GET`  | `/health` | none | Liveness + readiness (per-dependency status) |
+| `GET`  | `/health/live` | none | Liveness (process up; no dependency checks) |
+| `GET`  | `/health/ready` | none | Readiness (overall + per-dependency status) |
 | `POST` | `/api/v1/auth/signup` | anonymous | Create an account, returns a bearer token |
 | `POST` | `/api/v1/auth/login` | anonymous | Log in, returns a bearer token |
 | `POST` | `/api/v1/auth/change-password` | any user | Change the caller's password |
@@ -597,11 +599,21 @@ not exist.
 
 ---
 
-### Health endpoint
+### Health endpoints
 
-#### `GET /health` — liveness + readiness *(no auth)*
+Two probes, both anonymous and no parameters — just **Send**.
 
-No parameters — just **Send**.
+#### `GET /health/live` — liveness *(no auth)*
+
+Reports whether the process is up; it runs **no dependency checks**, so a transient
+Postgres/MCP outage does not fail it. Used by the ECS container health check to avoid
+restart storms on a dependency blip. Returns **200** while the process is running.
+
+#### `GET /health/ready` — readiness *(no auth)*
+
+Runs the dependency checks and emits the `HealthResponse` contract (overall status +
+per-dependency status): **200** when all are healthy, **503** otherwise. Used by the ALB
+target group and the Docker Compose health check to gate traffic/startup on dependencies.
 
 ```jsonc
 // Response — 200 OK
@@ -789,9 +801,10 @@ dashboard provisioning, and the `movie-search.json` dashboard are committed.
 | **Metrics** | OpenTelemetry Prometheus exporter on the API's `/metrics`, scraped by Prometheus | http://localhost:9090; dashboards in **Grafana** http://localhost:3000 |
 | **Logs** | Structured console logging (.NET `Microsoft.Extensions.Logging`; Python JSON logs with request IDs + tool timings) | `docker compose logs -f <service>` |
 
-Health checks: the API's `/health` reports overall + per-dependency status (Postgres via a
-DbContext check, the MCP server via an MCP ping over the shared session) and backs the compose
-healthcheck; the MCP server exposes its own `/health`.
+Health checks: the API splits liveness and readiness — `/health/live` is a bare process probe
+(used by the ECS container check), while `/health/ready` reports overall + per-dependency status
+(Postgres via a DbContext check, the MCP server via an MCP ping over the shared session) and backs
+the Compose health check and the ALB target group; the MCP server exposes its own `/health`.
 
 Rate limiting (60 req/min per authenticated user, fixed window on the JWT `sub` claim) is enforced
 by the API's rate limiter middleware; the p95 < 500ms SLO is validated by the k6 load test
@@ -848,12 +861,15 @@ and push to master:
 - **mcp-server** (pytest) — all six tools exercised end to end through FastMCP's **in-memory MCP
   client** (schemas, structured output, and error mapping included) against fake db/embeddings
   backends, plus the `/health` and `/metrics` HTTP routes.
-- **api** (xUnit, `tests/Tests`) — unit tests for MCP tool-result decoding and the password hasher,
-  plus in-memory integration tests (`WebApplicationFactory<Program>`) that boot the real API and
-  assert the request-pipeline wiring: the `/health` response contract and JWT authorization (a
-  protected endpoint returns `401` without a token). These deliberately run without external
-  infrastructure — dependencies report unhealthy under test — so they cover routing/auth/health
-  wiring, not the full API → MCP server → pgvector path (see §14).
+- **api** (xUnit, `tests/Tests`) — unit tests for the Wolverine CQRS handlers (all ten
+  auth/movies/stats handlers, exercised directly against hand-rolled fakes: role bootstrap and
+  credential handling, cache hit/miss and write behaviour, downstream-failure propagation, and
+  response mapping), MCP tool-result decoding, and the password hasher, plus in-memory integration
+  tests (`WebApplicationFactory<Program>`) that boot the real API and
+  assert the request-pipeline wiring: the `/health/ready` response contract, `/health/live`
+  liveness, and JWT authorization (a protected endpoint returns `401` without a token). These
+  deliberately run without external infrastructure — dependencies report unhealthy under test — so
+  they cover routing/auth/health wiring, not the full API → MCP server → pgvector path (see §14).
 
 ### Unit tests
 
@@ -927,7 +943,7 @@ a manual approval on the `production` GitHub environment.
 
 - **The MCP server is a hard dependency of the API's movie endpoints** — all movie/stats reads are
   MCP tool calls, so if the MCP server is down those endpoints fail (auth and cached responses
-  still work). The API `/health` surfaces this as the `mcp-server` dependency.
+  still work). The API `/health/ready` probe surfaces this as the `mcp-server` dependency.
 - The API↔MCP hop adds a network round-trip per uncached read (Redis response caching in the
   handlers absorbs repeat queries)
 - The AWS stacks have not been applied to a real account yet — `terraform validate` passes and CI
