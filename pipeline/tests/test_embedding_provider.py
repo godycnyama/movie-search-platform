@@ -4,6 +4,7 @@ override) picks TEI vs Bedrock, and the factory builds the matching client."""
 import boto3
 import pytest
 
+from main import _active_embedding_model
 from pipeline.embedding import (
     BedrockEmbeddingsClient,
     TeiEmbeddingsClient,
@@ -56,3 +57,18 @@ def test_factory_builds_bedrock_for_dev(monkeypatch):
     assert isinstance(provider, BedrockEmbeddingsClient)
     assert provider._model_id == "amazon.titan-embed-text-v2:0"
     assert provider._expected_dim == 1024
+
+
+def test_summary_model_is_tei_label_for_local():
+    settings = PipelineSettings(env="local", embedding_model="BAAI/bge-base-en-v1.5")
+    assert _active_embedding_model(settings) == "BAAI/bge-base-en-v1.5"
+
+
+@pytest.mark.parametrize("environment", ["dev", "prod"])
+def test_summary_model_is_bedrock_id_when_bedrock_selected(environment):
+    settings = PipelineSettings(
+        env=environment,
+        embedding_model="BAAI/bge-base-en-v1.5",
+        bedrock_embedding_model_id="amazon.titan-embed-text-v2:0",
+    )
+    assert _active_embedding_model(settings) == "amazon.titan-embed-text-v2:0"

@@ -18,7 +18,7 @@ from vega_datasets import data
 from models import Movie
 from pipeline.augmentation import augment
 from pipeline.cleaning import clean
-from pipeline.embedding import create_embeddings_provider
+from pipeline.embedding import create_embeddings_provider, resolve_provider_name
 from pipeline.imputation import impute
 from pipeline.loader import create_db_engine, movie_id, upsert_movies
 from pipeline.settings import PipelineSettings
@@ -79,13 +79,26 @@ def main() -> None:
         "generated_at": completed_at.isoformat(),
         "pipeline_version": settings.pipeline_version,
         "duration_seconds": round((completed_at - started_at).total_seconds(), 1),
-        "embedding_model": settings.embedding_model,
+        "embedding_model": _active_embedding_model(settings),
         "embedding_dim": settings.embedding_dim,
         "raw_rows": int(len(raw)),
         "loaded_rows": int(written),
         "cleaning": cleaning_report,
         "imputation": imputation_report,
     })
+
+
+def _active_embedding_model(settings: PipelineSettings) -> str:
+    """The embedding model label for the backend actually selected this run.
+
+    ``settings.embedding_model`` only names the TEI (local) model; the Bedrock
+    backend used in dev/prod embeds with ``bedrock_embedding_model_id``. Keying
+    off the resolved provider keeps the summary honest about what produced the
+    vectors.
+    """
+    if resolve_provider_name(settings) == "bedrock":
+        return settings.bedrock_embedding_model_id
+    return settings.embedding_model
 
 
 def _to_movie(row: pd.Series, embedding: list[float], pipeline_version: str) -> Movie:
