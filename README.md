@@ -116,8 +116,7 @@ compose gates both on its `/health` check.
 
 > **Credentials:** all secrets (DB password, Redis password, JWT signing key, Grafana admin
 > password) are read from the git-ignored `.env` file — never hardcoded in code or committed config.
-> The compose file uses `${VAR:?…}` so it fails fast if a required secret is missing. If this
-> platform is exposed to a wider internal audience, contact the AI Engineering team before deploying.
+> The compose file uses `${VAR:?…}` so it fails fast if a required secret is missing. 
 
 ---
 
@@ -177,7 +176,7 @@ The combined cleaning + imputation report is written to **stdout and
 
 ```bash
 # Full run (idempotent — re-running does not create duplicates)
-docker compose run --rm pipeline
+docker compose run pipeline
 
 # Locally with uv (requires postgres + the embeddings service reachable via env vars)
 cd pipeline && uv sync && uv run alembic upgrade head && uv run python src/main.py
@@ -823,29 +822,8 @@ terraform/
 The S3 state bucket + DynamoDB lock table are provisioned and managed separately
 (their own repo/process), then referenced via each environment's `backend.hcl`.
 
-### Why ECS Fargate over EKS
-
-The platform is a small, long-running set of stateless services (the .NET API and the MCP server) —
-a workload that does not need Kubernetes. **ECS Fargate** was chosen over **EKS** because:
-
-- **Lower operational overhead.** Fargate is serverless containers — there is no control plane to
-  upgrade, no worker nodes to patch/scale, and no cluster add-ons (CNI, CSI, ingress controllers) to
-  manage. EKS would add a Kubernetes control plane and node lifecycle that this two-service platform
-  does not justify.
-- **Less infrastructure code and smaller blast radius.** The whole deployment is expressed with a
-  handful of native AWS resources (task definitions, services, ALB, target groups) that map cleanly
-  to the existing Terraform modules — no Helm charts, manifests, or a second (Kubernetes) provider
-  to reason about.
-- **Cost fits the scale.** Each service autoscales between just 1 and 2 tasks; you pay only for the
-  task vCPU/memory that runs, with no always-on EKS control-plane charge or a baseline node pool
-  sitting idle.
-- **Fewer moving parts to secure.** IAM task roles, Secrets Manager `valueFrom` injection, private
-  subnets and security groups cover the security model directly, without also having to secure
-  Kubernetes RBAC, service accounts, and IRSA.
-- **No Kubernetes-specific requirements.** Nothing here needs custom operators, CRDs, multi-cloud
-  portability, or the broader K8s ecosystem — the usual reasons to reach for EKS — so that
-  complexity would be cost without benefit.
-
+The platform is a small, long-running set of stateless services (the .NET API and the MCP server) — a workload that does not need Kubernetes.
+*ECS Fargate** was chosen over **EKS** because of lower operational overhead, less infrastructure complexity, and lower cost
 If the platform later grows many more services, needs advanced scheduling, or a portable
 multi-cloud footprint, EKS becomes worth revisiting; at today's scale Fargate is the simpler, cheaper
 fit.
