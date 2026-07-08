@@ -496,7 +496,7 @@ to `application/problem+json` responses through the `Result<T>` type and a globa
 | API docs | **OpenAPI** spec + **Scalar** interactive UI |
 | Observability | **OpenTelemetry** (traces + Prometheus metrics) — see §11 |
 
-**Why Minimal APIs over controllers?** Minimal APIs give lower request overhead and faster startup, and — paired with **Carter** —
+Minimal APIs where chosen over controllers because they give lower request overhead and faster startup, and — paired with **Carter** —
 let each vertical slice register its own route inline alongside its handler, request and response
 models. That keeps a feature's endpoint in the same file as its logic (reinforcing the Vertical
 Slice design) instead of scattering it across a separate `Controllers/` folder, while still
@@ -807,8 +807,9 @@ durations).
 **Location:** [terraform/](terraform/) — **implemented** (see the detailed
 [terraform/README.md](terraform/README.md)). Target: **AWS ECS Fargate** — the **.NET API** and
 **MCP server** each autoscale between **1 and 2 tasks** (CPU target tracking), with query and
-document embeddings served by **Amazon Bedrock** (no in-cluster inference) and the **pipeline** as
-a one-off ECS task. Backed by **RDS PostgreSQL 16 (pgvector)** and **ElastiCache Redis** in private subnets,
+document embeddings served by **Amazon Bedrock** (no in-cluster inference). The **data pipeline is
+not deployed to AWS** — it runs locally via Docker Compose against the target database. Backed by
+**RDS PostgreSQL 16 (pgvector)** and **ElastiCache Redis** in private subnets,
 images in **ECR** (scan-on-push), a public **ALB** (HTTP now; supply `acm_certificate_arn` to turn
 on HTTPS + redirect), and CloudWatch alarms → SNS.
 
@@ -821,6 +822,33 @@ terraform/
 
 The S3 state bucket + DynamoDB lock table are provisioned and managed separately
 (their own repo/process), then referenced via each environment's `backend.hcl`.
+
+### Why ECS Fargate over EKS
+
+The platform is a small, long-running set of stateless services (the .NET API and the MCP server) —
+a workload that does not need Kubernetes. **ECS Fargate** was chosen over **EKS** because:
+
+- **Lower operational overhead.** Fargate is serverless containers — there is no control plane to
+  upgrade, no worker nodes to patch/scale, and no cluster add-ons (CNI, CSI, ingress controllers) to
+  manage. EKS would add a Kubernetes control plane and node lifecycle that this two-service platform
+  does not justify.
+- **Less infrastructure code and smaller blast radius.** The whole deployment is expressed with a
+  handful of native AWS resources (task definitions, services, ALB, target groups) that map cleanly
+  to the existing Terraform modules — no Helm charts, manifests, or a second (Kubernetes) provider
+  to reason about.
+- **Cost fits the scale.** Each service autoscales between just 1 and 2 tasks; you pay only for the
+  task vCPU/memory that runs, with no always-on EKS control-plane charge or a baseline node pool
+  sitting idle.
+- **Fewer moving parts to secure.** IAM task roles, Secrets Manager `valueFrom` injection, private
+  subnets and security groups cover the security model directly, without also having to secure
+  Kubernetes RBAC, service accounts, and IRSA.
+- **No Kubernetes-specific requirements.** Nothing here needs custom operators, CRDs, multi-cloud
+  portability, or the broader K8s ecosystem — the usual reasons to reach for EKS — so that
+  complexity would be cost without benefit.
+
+If the platform later grows many more services, needs advanced scheduling, or a portable
+multi-cloud footprint, EKS becomes worth revisiting; at today's scale Fargate is the simpler, cheaper
+fit.
 
 Infrastructure guarantees: all secrets **generated in-stack** and stored in Secrets Manager
 (injected into tasks via `valueFrom` — no credentials in tfvars, source, or plain env vars);
@@ -928,6 +956,9 @@ a manual approval on the `production` GitHub environment.
   drives dev/prod → Bedrock), so there is no in-cluster inference in the cloud.
 - TEI downloads model weights on first start (cold start ~1–2 min locally, cached in the
   `model-cache` volume thereafter); healthchecks gate dependents until the model is loaded.
+- There is no forgot-password functionality for users who have lost their passwords — an
+  authenticated user can rotate their password via `POST /api/v1/auth/change-password`, but there
+  is no self-service reset flow for locked-out accounts.
 
 **Future improvements**
 
@@ -939,3 +970,6 @@ a manual approval on the `production` GitHub environment.
 - HTTPS on the ALB (provide `acm_certificate_arn` once a domain/cert exists) and a Route53 alias.
 - Ship the local Grafana dashboard to the AWS environments (Amazon Managed Grafana or
   container-based) — CloudWatch alarms cover the basics today.
+- Deploy the data pipeline to AWS via **SageMaker Pipelines** — the pipeline stages would run as
+  scripts (processing steps) rather than the Docker container used locally. Today the pipeline is
+  run locally against the target database (§12).
